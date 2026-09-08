@@ -10,6 +10,7 @@
 - macOS 被遮挡窗口 keep-alive 实机回归：`OPEN_COMPUTER_USE_RUN_OCCLUSION_LIVE_TEST=1 swift test --filter OcclusionKeepAliveLiveTests`
 - macOS 多 app 扫描（对运行中的每个 GUI app 做 read-only snapshot，并在空白文本框里输入再删除一个标记；会向真实 app 输入，只在无人使用时跑）：`OPEN_COMPUTER_USE_RUN_APP_MATRIX=1 swift test --filter AppMatrixLiveTests`；加 `OPEN_COMPUTER_USE_APP_MATRIX_PARK=1` 会把每个非全屏窗口停靠到 agent display 上做同样的事再移回原位。
 - macOS 后台输入基准（25 轮 `sky_click` + `sky_key`，输出成功数与 p50 / p95 / max）：`OPEN_COMPUTER_USE_RUN_BACKGROUND_BENCH=1 OPEN_COMPUTER_USE_BENCH_CYCLES=25 swift test --filter BackgroundInputBenchmarkLiveTests`
+- 基准结果与复现命令汇总在 `docs/references/background-input-benchmarks.md`。
 - 逐阶段耗时：任何命令前加 `OPEN_COMPUTER_USE_DEBUG_TIMING=1`，stderr 输出 `[open-computer-use] timing <阶段> <ms>ms`（`sky_key.*`、`sky_click.total`、`snapshot.window_capture`、`snapshot.tree_walk`、`agent_display.*`）。
 - 跑实机回归时不要在这台 Mac 上打字或点鼠标：测试会短暂把目标窗口放到前台，用户的按键会落进去，前台 fixture 也会因用户操作失去 active。
 - macOS agent display 实机回归（会短暂创建并销毁一块 virtual display）：`OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST=1 swift test --filter AgentDisplayLiveTests`

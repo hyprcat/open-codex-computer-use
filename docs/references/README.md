@@ -23,6 +23,8 @@
   - 仓库内 `scripts/computer-use-cli/` 的用途、使用方法，以及为什么探测官方 bundled `computer-use` 时要优先走 `codex app-server` 代理而不是 direct stdio。
 - `macos-skylight-background-click.md`
   - `click_method=sky_click` 的文章与开源实现来源、固定源码版本、Chromium primer 事件序列、未采用范围和 macOS 私有 SPI 兼容性检查。
+- `background-input-benchmarks.md`
+  - 后台点击 / 键盘 / snapshot / agent display 的实测数字：环境、方法、每张表的 n 与分位数、决定默认间隔的扫描、多 app 扫描结果和复现命令（英文）。
 - `macos-window-visibility-and-spaces.md`
   - 被遮挡 / 其他 Space 窗口的 AX tree 与截图为什么会丢、WindowServer occlusion 通知 keep-alive、Chromium 懒加载 AX tree、已验证与未解决的边界。
 - `macos-skylight-background-keyboard.md`
