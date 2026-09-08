@@ -206,7 +206,13 @@ enum SnapshotBuilder {
         rootWindow = resolvedFocusedWindow
 
         var windowTitle = stringValue(of: rootWindow, attribute: kAXTitleAttribute)
-        var windowCapture = TimingLog.measure("snapshot.window_capture") { WindowCapture.resolve(for: app.pid, titleHint: windowTitle) }
+        // Bind the AX window to its CGWindowID directly when the SPI allows it, so
+        // the tree, the capture and every element frame refer to the same window;
+        // the title/area heuristics remain the fallback.
+        var windowCapture = TimingLog.measure("snapshot.window_capture") {
+            WindowCapture.resolve(for: app.pid, exactWindowID: SkyLightSPI.shared.windowID(for: rootWindow))
+                ?? WindowCapture.resolve(for: app.pid, titleHint: windowTitle)
+        }
         if windowCapture == nil,
            recoveryPolicy == .allowActivation,
            recoverVisibleWindow(for: app, appElement: appElement, preferredWindow: rootWindow) {
@@ -214,7 +220,8 @@ enum SnapshotBuilder {
             if let recoveredWindow = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide) {
                 rootWindow = recoveredWindow
                 windowTitle = stringValue(of: recoveredWindow, attribute: kAXTitleAttribute)
-                windowCapture = WindowCapture.resolve(for: app.pid, titleHint: windowTitle)
+                windowCapture = WindowCapture.resolve(for: app.pid, exactWindowID: SkyLightSPI.shared.windowID(for: recoveredWindow))
+                    ?? WindowCapture.resolve(for: app.pid, titleHint: windowTitle)
             }
         }
 
@@ -492,6 +499,28 @@ private struct WindowCapture {
     let bounds: CGRect
     let image: CGImage?
 
+    /// Exact binding: the window the AX tree was walked from.
+    static func resolve(for pid: pid_t, exactWindowID: CGWindowID?) -> WindowCapture? {
+        guard let exactWindowID,
+              let infoList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]
+        else {
+            return nil
+        }
+        for info in infoList {
+            guard
+                let number = info[kCGWindowNumber as String] as? NSNumber, number.uint32Value == exactWindowID,
+                let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t, ownerPID == pid,
+                let layer = info[kCGWindowLayer as String] as? Int,
+                let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
+                let bounds = CGRect(dictionaryRepresentation: boundsDictionary), !bounds.isEmpty
+            else {
+                continue
+            }
+            return WindowCapture(windowID: exactWindowID, layer: layer, bounds: bounds, image: captureImage(windowID: exactWindowID, bounds: bounds))
+        }
+        return nil
+    }
+
     static func resolve(for pid: pid_t, titleHint: String?) -> WindowCapture? {
         // On-screen windows first (front-to-back order is meaningful there);
         // fall back to every window of the pid so a window on another Space
@@ -538,7 +567,16 @@ private struct WindowCapture {
         return WindowCapture(windowID: best.windowID, layer: best.layer, bounds: best.bounds, image: image)
     }
 
+    /// WindowServer's hardware window capture first (any Space, covered or not,
+    /// ~10-40ms), ScreenCaptureKit when it is unavailable.
     private static func captureImage(windowID: CGWindowID, bounds: CGRect) -> CGImage? {
+        if let image = TimingLog.measure("snapshot.capture_hw") { SkyLightSPI.shared.hardwareCaptureWindow(windowID) } {
+            return image
+        }
+        return TimingLog.measure("snapshot.capture_sck") { captureImageWithScreenCaptureKit(windowID: windowID, bounds: bounds) }
+    }
+
+    private static func captureImageWithScreenCaptureKit(windowID: CGWindowID, bounds: CGRect) -> CGImage? {
         try? BlockingAsyncBridge.run(timeout: screenshotCaptureTimeout) {
             let shareableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let window = shareableContent.windows.first(where: { $0.windowID == windowID }) else {

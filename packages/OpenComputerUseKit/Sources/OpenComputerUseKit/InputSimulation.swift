@@ -191,7 +191,9 @@ enum InputSimulation {
             }
             down.postToPid(pid)
             up.postToPid(pid)
-            Thread.sleep(forTimeInterval: 0.02)
+            if InputTiming.typeChunkDelay > 0 {
+                Thread.sleep(forTimeInterval: InputTiming.typeChunkDelay)
+            }
         }
     }
 
@@ -252,7 +254,9 @@ enum InputSimulation {
             activeFlags.remove(modifier.flag)
         }
 
-        Thread.sleep(forTimeInterval: 0.1)
+        if InputTiming.pressKeySettle > 0 {
+            Thread.sleep(forTimeInterval: InputTiming.pressKeySettle)
+        }
     }
 
     private static func postMouseEvent(type: CGEventType, source: CGEventSource, point: CGPoint, button: CGMouseButton, clickState: Int) throws {

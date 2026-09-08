@@ -110,6 +110,12 @@ final class SkyLightSPI: @unchecked Sendable {
     private static let copySpacesForWindowsSymbol = "SLSCopySpacesForWindows"
     private static let copyManagedDisplaySpacesSymbol = "SLSCopyManagedDisplaySpaces"
     private static let axElementGetWindowSymbol = "_AXUIElementGetWindow"
+    // WindowServer reads the window's backing store on the GPU: works for
+    // covered windows and for windows on inactive (fullscreen) Spaces where
+    // ScreenCaptureKit fails, in ~10-40ms. The wrapper is the 4-argument form
+    // (cid, windowIDs, count, options); 0x800 ignores the global clip shape.
+    private static let hardwareCaptureWindowListSymbol = "SLSHWCaptureWindowList"
+    private static let hardwareCaptureOptions: UInt32 = 0x800
     private static let applicationServicesPath = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
 
     private typealias PostToPidFunction = @convention(c) (pid_t, UnsafeMutableRawPointer?) -> Void
@@ -127,6 +133,7 @@ final class SkyLightSPI: @unchecked Sendable {
     private typealias CopySpacesForWindowsFunction = @convention(c) (UInt32, Int32, CFArray) -> Unmanaged<CFArray>?
     private typealias CopyManagedDisplaySpacesFunction = @convention(c) (UInt32) -> Unmanaged<CFArray>?
     private typealias AXElementGetWindowFunction = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+    private typealias HardwareCaptureWindowListFunction = @convention(c) (UInt32, UnsafePointer<CGWindowID>, Int32, UInt32) -> Unmanaged<CFArray>?
 
     private let frameworkHandle: UnsafeMutableRawPointer?
     private let applicationServicesHandle: UnsafeMutableRawPointer?
@@ -140,6 +147,7 @@ final class SkyLightSPI: @unchecked Sendable {
     private let copySpacesForWindowsFunction: CopySpacesForWindowsFunction?
     private let copyManagedDisplaySpacesFunction: CopyManagedDisplaySpacesFunction?
     private let axElementGetWindowFunction: AXElementGetWindowFunction?
+    private let hardwareCaptureWindowListFunction: HardwareCaptureWindowListFunction?
 
     let capability: SkyLightSPICapability
     /// Occlusion keep-alive (`WindowOcclusionKeepAlive`) is a separate optional
@@ -161,6 +169,7 @@ final class SkyLightSPI: @unchecked Sendable {
         copySpacesForWindowsFunction = Self.resolve(handle: handle, symbol: Self.copySpacesForWindowsSymbol)
         copyManagedDisplaySpacesFunction = Self.resolve(handle: handle, symbol: Self.copyManagedDisplaySpacesSymbol)
         axElementGetWindowFunction = Self.resolve(handle: appServicesHandle, symbol: Self.axElementGetWindowSymbol)
+        hardwareCaptureWindowListFunction = Self.resolve(handle: handle, symbol: Self.hardwareCaptureWindowListSymbol)
 
         var missingSymbols: [String] = []
         if postToPidFunction == nil {
@@ -212,6 +221,18 @@ final class SkyLightSPI: @unchecked Sendable {
             }
         }
         return result
+    }
+
+    /// Capture one window's backing store (retina scale). nil when the symbol is
+    /// absent or WindowServer returned nothing; callers fall back to SCK.
+    func hardwareCaptureWindow(_ windowID: CGWindowID) -> CGImage? {
+        guard let mainConnectionFunction, let hardwareCaptureWindowListFunction else { return nil }
+        var id = windowID
+        guard let array = hardwareCaptureWindowListFunction(mainConnectionFunction(), &id, 1, Self.hardwareCaptureOptions)?.takeRetainedValue(),
+              CFArrayGetCount(array) > 0
+        else { return nil }
+        let image = unsafeBitCast(CFArrayGetValueAtIndex(array, 0), to: CGImage.self)
+        return image.width > 0 && image.height > 0 ? image : nil
     }
 
     /// CGWindowID behind an AX window element.
@@ -286,7 +307,9 @@ final class SkyLightSPI: @unchecked Sendable {
             targetWindowID: targetWindowID
         )
         try postActivationCommand(plan.activateTarget)
-        Thread.sleep(forTimeInterval: 0.040)
+        if InputTiming.focusRecordSettle > 0 {
+            Thread.sleep(forTimeInterval: InputTiming.focusRecordSettle)
+        }
 
         return SkyLightSyntheticFocusContext(
             deactivateTarget: plan.deactivateTarget
@@ -319,7 +342,9 @@ final class SkyLightSPI: @unchecked Sendable {
 
     func endSyntheticTargetFocus(_ context: SkyLightSyntheticFocusContext) throws {
         try postActivationCommand(context.deactivateTarget)
-        Thread.sleep(forTimeInterval: 0.040)
+        if InputTiming.focusRecordSettle > 0 {
+            Thread.sleep(forTimeInterval: InputTiming.focusRecordSettle)
+        }
     }
 
     private func unavailableError() -> ComputerUseError {

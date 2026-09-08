@@ -37,7 +37,8 @@ final class BackgroundInputBenchmarkLiveTests: XCTestCase {
         defer { stop(chrome) }
         let window = try waitForWindow(pid: chrome.processIdentifier, nameContaining: "ocu-bench-")
         // Pin visibility while visible (what get_app_state does), then cover it.
-        WindowOcclusionKeepAlive.shared.keepVisible(windowID: window.id, bounds: window.bounds, spi: spi)
+        let pinned = ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_BENCH_UNPINNED"] != "1"
+        if pinned { WindowOcclusionKeepAlive.shared.keepVisible(windowID: window.id, bounds: window.bounds, spi: spi) }
         defer { WindowOcclusionKeepAlive.shared.releaseAll() }
         let cover = try launch(executable: Self.packageRoot.appendingPathComponent(".build/debug/OpenComputerUseFixture"))
         defer { stop(cover) }
@@ -89,7 +90,7 @@ final class BackgroundInputBenchmarkLiveTests: XCTestCase {
         func row(_ name: String, _ values: [Double]) -> String {
             String(format: "BENCH %-22@ n=%2d p50=%7.1fms p95=%7.1fms max=%7.1fms", name, values.count, pct(values, 0.5), pct(values, 0.95), values.max() ?? .nan)
         }
-        print("BENCH cycles=\(cycles) target=covered isolated Chrome (macOS \(ProcessInfo.processInfo.operatingSystemVersionString))")
+        print("BENCH cycles=\(cycles) pinned=\(pinned) keySettle=\(Int(SkyKeyboardDispatcher.keyWindowFallbackSettle * 1000))ms release=\(Int(SkyKeyboardDispatcher.releaseSettle * 1000))ms target=covered isolated Chrome (macOS \(ProcessInfo.processInfo.operatingSystemVersionString))")
         print("BENCH sky_click success \(clickOK)/\(cycles)   sky_key success \(keyOK)/\(cycles)   frontmost unchanged=\(frontBefore == frontAfter)")
         print(row("sky_click dispatch", clickDispatch)); print(row("sky_click observed", clickObserved))
         print(row("sky_key dispatch", keyDispatch)); print(row("sky_key observed", keyObserved))

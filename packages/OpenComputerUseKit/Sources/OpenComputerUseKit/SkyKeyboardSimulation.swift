@@ -89,9 +89,19 @@ func skyKeyWindowMatchesTarget(
 /// pointer never moves.
 enum SkyKeyboardDispatcher {
     private static let dispatchLock = NSLock()
-    /// Fixed settle for the target to make the window key (Chrome: ~215ms on macOS 27).
-    static let keyWindowFallbackSettle: TimeInterval = 0.3
-    static let releaseSettle: TimeInterval = 0.1
+    /// The activation record, the key-window records, the key events and the
+    /// deactivation record all travel the target's single event queue, so the
+    /// app handles them in order: no timing gap is needed between them. Both
+    /// settles therefore default to 0 and exist only as calibration knobs
+    /// (OPEN_COMPUTER_USE_SKY_KEY_SETTLE_MS / OPEN_COMPUTER_USE_SKY_KEY_RELEASE_MS)
+    /// for a target that turns out to process input asynchronously.
+    static let keyWindowFallbackSettle: TimeInterval = settle("OPEN_COMPUTER_USE_SKY_KEY_SETTLE_MS")
+    static let releaseSettle: TimeInterval = settle("OPEN_COMPUTER_USE_SKY_KEY_RELEASE_MS")
+
+    private static func settle(_ variable: String) -> TimeInterval {
+        guard let raw = ProcessInfo.processInfo.environment[variable], let ms = Double(raw) else { return 0 }
+        return max(0, ms) / 1000
+    }
 
     static func typeText(
         target: SkyKeyboardTarget,
@@ -164,7 +174,9 @@ enum SkyKeyboardDispatcher {
             let deliverStart = TimingLog.now()
             try body()
             TimingLog.log("sky_key.deliver", since: deliverStart)
-            Thread.sleep(forTimeInterval: releaseSettle)
+            if releaseSettle > 0 {
+                Thread.sleep(forTimeInterval: releaseSettle)
+            }
         } catch {
             try? spi.endSyntheticTargetFocus(focusContext)
             throw error
@@ -173,12 +185,10 @@ enum SkyKeyboardDispatcher {
         TimingLog.log("sky_key.total", since: start)
     }
 
-    /// Chrome needs ~215ms after the key-window records before its page has
-    /// focus; no cross-process observable reports that moment reliably (the AX
-    /// focused window and focused element both report early), so keep a fixed
-    /// settle and log it.
     private static func waitForKeyWindow(_ target: SkyKeyboardTarget, spi: SkyLightSPI) {
-        Thread.sleep(forTimeInterval: keyWindowFallbackSettle)
+        if keyWindowFallbackSettle > 0 {
+            Thread.sleep(forTimeInterval: keyWindowFallbackSettle)
+        }
     }
 
     private static func validate(target: SkyKeyboardTarget) throws {

@@ -45,18 +45,37 @@ agent 第一次接触时就已经被遮挡或已在其他 Space 的 Chromium 窗
 - spike 里用 Swift KVC / IMP 直接驱动这些类会在 dealloc 崩溃；正式实现放在 ObjC shim 里，ARC 管理对象生命周期，`AgentDisplayLiveTests` 验证创建、停靠、点击输入、恢复与销毁全程无崩溃，显示器数量恢复。
 - 已知副作用：agent 显示器排在主屏右侧，鼠标可能滑入；停靠期间窗口不在用户桌面上。所以它是显式 opt-in，不进入默认路径。
 
-## 实测耗时（macOS 27.0，M 系列，2026-09-08）
+## 实测耗时（macOS 27.0，M 系列，2026-09-09）
 
-被完全遮挡的隔离 Chrome，25 轮，全部成功，前台不变：
+被完全遮挡的隔离 Chrome，50 轮，全部成功且每轮恰好一次点击，前台不变：
 
-| 动作 | 调用返回 p50 | 页面观察到 p50 | p95（观察到） |
-| --- | --- | --- | --- |
-| `sky_click` | 320 ms | 389 ms | 398 ms |
-| `sky_key` `type_text` | 224 ms | 270 ms | 279 ms |
+| 动作 | 调用返回 p50 | 页面观察到 p50 | p95（观察到） | 调整前的调用返回 |
+| --- | --- | --- | --- | --- |
+| `sky_click` | 82 ms | 260 ms | 271 ms | 323 ms |
+| `sky_key` `type_text` | 30 ms | 237 ms | 244 ms | 526 ms |
 
-`sky_click` 的成本几乎全是 Cua recipe 里的固定间隔（primer 后 100 ms、renderer settle 100 ms、focus record 前后各 40 ms）；`sky_key` 是 activation 40 ms + Chrome 变 key 的 300 ms 固定 settle + release 100 ms + deactivate 40 ms。Chrome 变 key 没有可靠的跨进程观测点（AX focused window / focused element 都会提前报告），所以这 300 ms 保留为固定值。
+“页面观察到”包含 Chromium 自己的处理和测试轮询窗口标题的延迟，是外部无法压缩的部分。
 
-agent display：创建显示器约 330–350 ms，WindowServer 登记 Space 后就绪约 400–570 ms，停靠窗口约 140–230 ms，恢复约 260 ms（都是轮询到条件满足即返回）。snapshot：窗口捕获约 90–155 ms，AX tree 遍历约 25–80 ms。
+固定间隔的取舍来自 `BackgroundInputBenchmarkLiveTests` 的扫描，而不是沿用继承来的数字：
+
+- 同一条事件队列里的东西不需要间隔：type_text 的 chunk 间隔（原 20 ms）、press_key 收尾（原 100 ms）、`sky_key` 等 Chrome 变 key 的 settle（原 300 ms）和 release（原 100 ms）都降为 0，50/50 成功。原因是 key-window record、按键事件、deactivate record 在目标 app 内按序处理。
+- 跨通道的地方仍要间隔：activation / key-window record 走 `SLPSPostEventRecordTo`，鼠标键盘事件走 `CGEventPostToPid`，两条通道没有顺序保证。focus record 后的间隔 0 ms 实测也通过，默认取 10 ms（原 40 ms）留余量。
+- `sky_click` recipe 内部的间隔不能为 0：scale 0 时 30 轮点击全部失败并把后续按键也带坏，scale 0.05 起全部成功，默认取 0.2（primer 后 20 ms、renderer settle 20 ms）。
+- 所有间隔都是环境变量可调的校准旋钮（`OPEN_COMPUTER_USE_FOCUS_RECORD_SETTLE_MS`、`OPEN_COMPUTER_USE_SKY_CLICK_DELAY_SCALE`、`OPEN_COMPUTER_USE_TYPE_CHUNK_DELAY_MS`、`OPEN_COMPUTER_USE_PRESS_KEY_SETTLE_MS`、`OPEN_COMPUTER_USE_SKY_KEY_SETTLE_MS`、`OPEN_COMPUTER_USE_SKY_KEY_RELEASE_MS`）。
+
+agent display：创建显示器约 330–350 ms，WindowServer 登记 Space 后就绪约 400–570 ms，停靠窗口约 140–230 ms，恢复约 260 ms（都是轮询到条件满足即返回）。
+
+窗口截图：主路径改为 `SLSHWCaptureWindowList(cid, &wid, 1, 0x800)`（WindowServer 直接读窗口 backing store，retina 分辨率，15–45 ms），ScreenCaptureKit 只做 fallback（90–155 ms）。ScreenCaptureKit 对处于非活动全屏 Space 的窗口返回 `-3811`，HW capture 对它们同样有效（实测 VS Code、Blender）。
+
+窗口绑定：AX root window 用 `_AXUIElementGetWindow` 直接绑定到 `CGWindowID`，tree、截图、元素坐标指向同一个窗口；标题 / 面积启发式只做 fallback。
+
+## 多 app 扫描（`AppMatrixLiveTests`，2026-09-09）
+
+对本机运行中的 27 个 GUI app 各做一次 read-only snapshot，并在暴露空白文本框 / 搜索框的 app 上 `sky_click` + `sky_key` 输入标记再删除，全程前台不变：
+
+- 有窗口的 app 全部拿到 tree 与截图：Zed、TextEdit、System Settings、KiCad（原生）、VS Code、Slack、Chrome（Chromium / Electron）、Safari（WebKit）、Blender（GL，tree 只有 5 个节点，截图正常）。
+- 输入验证：System Settings 搜索框（原生）与 Slack 的 “Find a conversation” 搜索框（Electron）都收到标记并可删除；Safari 的候选是 popover 子元素，坐标在主窗口之外，`sky_click` 按设计拒绝。
+- “cgWindowNotFound” 的行是没有窗口的 app（Notes、Mail、Excel、Activity Monitor 等只在后台运行），read-only policy 下不会去激活它们，这是预期结果。
 
 物理键盘路由：目标处于 synthetic key 状态时，HID 键盘事件仍然送到真实前台 app，不会进入目标窗口（`KeyRoutingExperiment` 实验，未入库）。
 

@@ -178,8 +178,9 @@ enum SkyClickDispatcher {
                 try spi.postToPid(event, pid: target.pid)
                 event.postToPid(target.pid)
 
-                if step.delayAfter > 0 {
-                    Thread.sleep(forTimeInterval: step.delayAfter)
+                let delay = step.delayAfter * InputTiming.skyClickDelayScale
+                if delay > 0 {
+                    Thread.sleep(forTimeInterval: delay)
                 }
             }
         } catch {
@@ -193,7 +194,10 @@ enum SkyClickDispatcher {
             // SkyLight delivery is asynchronous. Keep the target's AppKit
             // synthetic active state long enough for Chromium's renderer hop
             // to consume the final mouse-up before deactivating only the target.
-            Thread.sleep(forTimeInterval: 0.100)
+            let rendererSettle = 0.100 * InputTiming.skyClickDelayScale
+            if rendererSettle > 0 {
+                Thread.sleep(forTimeInterval: rendererSettle)
+            }
             try spi.endSyntheticTargetFocus(focusContext)
         }
     }
