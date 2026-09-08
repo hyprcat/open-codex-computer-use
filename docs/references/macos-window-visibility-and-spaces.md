@@ -35,19 +35,20 @@ app 自己不会“知道”被遮挡；它只会收到 WindowServer 的 occlusi
 3. Chromium 系 app 第一次走 tree 若没有 `AXWebArea`，在窗口可见时最多重走 3 秒；窗口被遮挡则在 tree 末尾追加说明，不等待、不激活。
 4. `sky_click` / `sky_key` 只要求窗口仍属于目标进程且 app 未被隐藏，不再要求 on-screen。
 
-## 已经被遮挡的窗口：agent 专用 virtual display（spike 已验证）
+## 已经被遮挡的窗口：agent display（`window_placement=agent_display`）
 
-agent 第一次接触时就已经被遮挡或已在其他 Space 的 Chromium 窗口，没有 WindowServer 原语能在不显示的情况下把它“变可见”。macOS 自己的答案是 virtual display（`CGVirtualDisplay` 私有 ObjC 类，Screen Sharing 的 headless 会话就是这样做的）。2026-09-08 的 spike（`~/…/virtual-display-spike.swift.txt`，未进仓库）结果：
+agent 第一次接触时就已经被遮挡或已在其他 Space 的 Chromium 窗口，没有 WindowServer 原语能在不显示的情况下把它“变可见”。macOS 自己的答案是 virtual display（`CGVirtualDisplay` 私有 ObjC 类，Screen Sharing 的 headless 会话就是这样做的）。本仓库把它做成 `get_app_state` 的显式 `window_placement=agent_display`：`AgentDisplay` 通过 `packages/OpenComputerUseVirtualDisplayShim`（ObjC，`NSClassFromString` 解析、无硬链接依赖）创建 1920×1080 的 agent 显示器，用 AX `kAXPosition` 把目标窗口的 frame 移进该显示器（不激活、不抬升），窗口随之落到该显示器的 Space 上并对其 app 真正可见；`window_placement=restore` 或进程退出时把窗口移回原位置，没有窗口停靠时销毁显示器。实机回归是 `AgentDisplayLiveTests`。spike 阶段的观察：
 
 - `CGVirtualDisplayDescriptor` → `-[CGVirtualDisplay initWithDescriptor:]` → `CGVirtualDisplaySettings`（`hiDPI`、`modes` = `-[CGVirtualDisplayMode initWithWidth:height:refreshRate:]`）→ `applySettings:` 返回 true，得到新的 `displayID`，`SLSCopyManagedDisplaySpaces` 立刻多出一个显示器和它自己的 Space；用户的 active Space、frontmost app、鼠标位置都不变。新显示器排在主屏右侧（bounds 从 x=1512 开始），鼠标理论上可以滑进去。
 - `SLSMoveWindowsToManagedSpace` 单独不能把窗口跨显示器移到那个 Space；先用 AX `kAXPosition` 把窗口 frame 移进 virtual display 的 bounds（不激活），再移 Space，`SLSCopySpacesForWindows` 就报告它在新 Space。
 - 一个此前被完全遮挡、页面 `hidden`、没有 `AXWebArea` 的 Chrome 窗口，放到 virtual display 上后页面立刻 `visible`；生产 `SnapshotBuilder` 返回网页内容与截图，`sky_click` / `sky_key` 正常；结束后把窗口移回原位置与原 Space，进程退出后显示器消失。
-- 注意：释放 `CGVirtualDisplay` 对象时 spike 里的 KVC / IMP 调用方式触发了 dealloc 崩溃，正式实现应用带头文件声明的 ObjC 包装。
+- spike 里用 Swift KVC / IMP 直接驱动这些类会在 dealloc 崩溃；正式实现放在 ObjC shim 里，ARC 管理对象生命周期，`AgentDisplayLiveTests` 验证创建、停靠、点击输入、恢复与销毁全程无崩溃，显示器数量恢复。
+- 已知副作用：agent 显示器排在主屏右侧，鼠标可能滑入；停靠期间窗口不在用户桌面上。所以它是显式 opt-in，不进入默认路径。
 
 ## 还没有解决的部分
 
 - `CrossSpaceLiveTests` 需要机器上有第二个 Desktop（Mission Control 里手动创建；`SLSSpaceCreate` 造的 Space 不是 managed Desktop，Dock 的 Mission Control AX tree 只在鼠标悬停时才暴露 Spaces bar）。测试通过 `SLSManagedDisplaySetCurrentSpace` 切到 Desktop 2 启动 Chrome 再切回来，因为窗口不能被第三方进程跨 Space 移动。
-- virtual display 的产品化：opt-in、会话结束时归还窗口、显示器排列与鼠标滑入的处理，见 execution plan。
+- agent display 的鼠标滑入与显示器排列没有额外处理；`SLSSpaceCreate` 类跨 Space 移动窗口的 API 对第三方进程无效，所以停靠只能靠移动 frame。
 
 ## 参考来源
 

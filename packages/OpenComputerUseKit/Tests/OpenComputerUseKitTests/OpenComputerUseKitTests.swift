@@ -1747,6 +1747,29 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertFalse(appHasLazyWebAccessibility(bundleURL: nil))
     }
 
+    func testWindowPlacementParsingAndAgentDisplayGeometry() throws {
+        XCTAssertEqual(try parseWindowPlacement(nil), .keep)
+        XCTAssertEqual(try parseWindowPlacement(" Agent_Display "), .agentDisplay)
+        XCTAssertEqual(try parseWindowPlacement("restore"), .restore)
+        XCTAssertThrowsError(try parseWindowPlacement("park")) { error in
+            XCTAssertEqual(
+                (error as? ComputerUseError)?.errorDescription,
+                "Invalid window_placement 'park'. Expected one of: keep, agent_display, restore"
+            )
+        }
+
+        let display = CGRect(x: 1512, y: 0, width: 1920, height: 1080)
+        XCTAssertEqual(agentDisplayPlacement(windowSize: CGSize(width: 600, height: 420), displayBounds: display), CGPoint(x: 1552, y: 40))
+        let huge = agentDisplayPlacement(windowSize: CGSize(width: 4000, height: 3000), displayBounds: display)
+        XCTAssertEqual(huge, CGPoint(x: 1512, y: 0), "oversized windows are pinned to the display origin")
+        XCTAssertTrue(display.contains(huge))
+        for name in ["get_app_state"] {
+            let tool = ToolDefinitions.all.first { $0.name == name }
+            let properties = tool?.inputSchema["properties"] as? [String: Any]
+            XCTAssertEqual((properties?["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "agent_display", "restore"])
+        }
+    }
+
     func testKeyMethodParsingAndPolicy() throws {
         XCTAssertEqual(try parseKeyMethod(nil), .auto)
         XCTAssertEqual(try parseKeyMethod(" SKY_KEY "), .skyKey)
@@ -2351,6 +2374,7 @@ final class OpenComputerUseKitTests: XCTestCase {
             focusedSummary: focusedSummary,
             focusedElement: nil,
             selectedText: selectedText,
+            windowElement: nil,
             elements: [:]
         )
     }

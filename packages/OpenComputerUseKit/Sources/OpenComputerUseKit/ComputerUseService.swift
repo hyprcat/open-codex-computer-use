@@ -452,9 +452,32 @@ public final class ComputerUseService {
     public func getAppState(
         app query: String,
         textLimit: SnapshotTextLimit = .defaults,
-        treeLimits: AccessibilityTreeLimits = .defaults
+        treeLimits: AccessibilityTreeLimits = .defaults,
+        windowPlacement: WindowPlacement = .keep
     ) throws -> ToolCallResult {
-        snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits), style: .fullState)
+        guard windowPlacement != .keep else {
+            return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits), style: .fullState)
+        }
+
+        // Explicit placements never activate or raise; they only move the frame.
+        let snapshot = try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly)
+        guard snapshot.mode != .fixture else {
+            throw ComputerUseError.message("window_placement '\(windowPlacement.rawValue)' is not supported for fixture apps")
+        }
+        guard let windowID = snapshot.targetWindowID, let windowElement = snapshot.windowElement else {
+            throw ComputerUseError.stateUnavailable("window_placement '\(windowPlacement.rawValue)' requires a current target window. Run get_app_state again.")
+        }
+
+        switch windowPlacement {
+        case .agentDisplay:
+            try AgentDisplay.shared.park(windowID: windowID, pid: snapshot.app.pid, window: windowElement)
+        case .restore:
+            try AgentDisplay.shared.restore(windowID: windowID)
+        case .keep:
+            break
+        }
+
+        return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly), style: .fullState)
     }
 
     public func click(

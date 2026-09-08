@@ -54,7 +54,8 @@ public final class ComputerUseToolDispatcher {
                 treeLimits: AccessibilityTreeLimits.defaults.replacing(
                     maxNodeCount: try optionalPositiveInt("max_tree_nodes", in: arguments),
                     maxDepth: try optionalPositiveInt("max_tree_depth", in: arguments)
-                )
+                ),
+                windowPlacement: try parseWindowPlacement(optionalString("window_placement", in: arguments))
             )
         case "click":
             return try service.click(

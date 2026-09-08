@@ -26,6 +26,8 @@ var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click
 
 var keyMethodValues = []string{"auto", "sky_key"}
 
+var windowPlacementValues = []string{"keep", "agent_display", "restore"}
+
 //go:embed runtime.py
 var linuxRuntimeScript string
 
@@ -204,6 +206,13 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 		textLimit, err := optionalTextLimit(args, "text_limit")
 		if err != nil {
 			return textResult(err.Error(), true)
+		}
+		windowPlacement, err := parseWindowPlacement(optionalString(args, "window_placement"))
+		if err != nil {
+			return textResult(err.Error(), true)
+		}
+		if windowPlacement != "keep" {
+			return textResult("window_placement '"+windowPlacement+"' is not supported on Linux", true)
 		}
 		return s.getAppState(requiredString(args, "app"), textLimit, maxTreeNodes, maxTreeDepth)
 	case "click":
@@ -1130,6 +1139,19 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
+func parseWindowPlacement(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "keep", nil
+	}
+	for _, candidate := range windowPlacementValues {
+		if normalized == candidate {
+			return normalized, nil
+		}
+	}
+	return "", fmt.Errorf("Invalid window_placement %q. Expected one of: %s", value, strings.Join(windowPlacementValues, ", "))
+}
+
 func parseKeyMethod(value string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	if normalized == "" {
@@ -1198,10 +1220,11 @@ func toolDefinitions() []toolDefinition {
 			Description: "Get the state of an already running app's key window and return a screenshot and accessibility tree. This must be called once per assistant turn before interacting with the app. This tool is part of plugin `Computer Use`.",
 			Annotations: readOnlyAnnotations(),
 			InputSchema: objectSchema(map[string]any{
-				"app":            stringProperty("App name or bundle identifier"),
-				"text_limit":     textLimitProperty("Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
-				"max_tree_nodes": positiveIntegerProperty("Maximum accessibility tree nodes to render. Defaults to 1200."),
-				"max_tree_depth": positiveIntegerProperty("Maximum accessibility tree depth to render. Defaults to 64."),
+				"app":              stringProperty("App name or bundle identifier"),
+				"text_limit":       textLimitProperty("Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
+				"max_tree_nodes":   positiveIntegerProperty("Maximum accessibility tree nodes to render. Defaults to 1200."),
+				"max_tree_depth":   positiveIntegerProperty("Maximum accessibility tree depth to render. Defaults to 64."),
+				"window_placement": enumStringProperty("keep (default) leaves the window where it is. agent_display and restore are macOS-only and not supported on Linux.", windowPlacementValues),
 			}, []string{"app"}),
 		},
 		{

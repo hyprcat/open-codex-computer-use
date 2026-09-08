@@ -8,6 +8,7 @@
 - macOS SkyLight 实机回归：`OPEN_COMPUTER_USE_RUN_SKY_CLICK_LIVE_TEST=1 swift test --filter SkyClickLiveTests`
 - macOS SkyLight 后台键盘实机回归：`OPEN_COMPUTER_USE_RUN_SKY_KEY_LIVE_TEST=1 swift test --filter SkyKeyboardLiveTests`
 - macOS 被遮挡窗口 keep-alive 实机回归：`OPEN_COMPUTER_USE_RUN_OCCLUSION_LIVE_TEST=1 swift test --filter OcclusionKeepAliveLiveTests`
+- macOS agent display 实机回归（会短暂创建并销毁一块 virtual display）：`OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST=1 swift test --filter AgentDisplayLiveTests`
 - macOS 其他 Desktop 实机回归（需要第二个 Desktop，测试会短暂切换 Space 启动目标）：`OPEN_COMPUTER_USE_RUN_CROSS_SPACE_LIVE_TEST=1 swift test --filter CrossSpaceLiveTests`
 - Linux runtime：`(cd apps/OpenComputerUseLinux && go test ./...)`、`./scripts/build-open-computer-use-linux.sh --arch arm64`
 - 本地诊断：
@@ -29,7 +30,7 @@
 2. 用 `open-computer-use list-apps` 确认目标 app 是否被发现。
 3. 用 `open-computer-use snapshot <app>` 看是 transport 问题还是 snapshot / action 问题。
 4. 如果 `sky_key` 输入没有落到目标：先确认目标不是隐藏 app、窗口仍属于同一 PID；Chromium 目标可以在页面里观察 `document.hasFocus()`，投递期间应为 true。跑实机回归时不要同时在其他窗口打字，否则前台 fixture 会因为用户自己的操作失去 active。
-5. 如果被遮挡或其他 Space 的 Chromium / Electron 窗口 tree 里没有网页内容，看 tree 末尾是否有 “window is covered” 说明：说明 agent 第一次看到它时它已经被遮挡。让窗口露出一次再 `get_app_state`，之后再遮挡也会保留内容。
+5. 如果被遮挡或其他 Space 的 Chromium / Electron 窗口 tree 里没有网页内容，看 tree 末尾是否有 “window is covered” 说明：说明 agent 第一次看到它时它已经被遮挡。让窗口露出一次再 `get_app_state`，之后再遮挡也会保留内容；或者显式调用 `get_app_state` 并传 `window_placement=agent_display` 把窗口停靠到 agent 显示器，用完 `restore`。
 6. 如果只有 `sky_click` 失败，先重新执行 `get_app_state`，确认窗口仍属于同一进程且 app 未被隐藏；错误里出现 `missing SkyLight symbols` 时不要改用隐式 fallback，应按当前 macOS 版本重新验证私有 SPI。被遮挡的 Chromium 页面仍无效果时，再用受控页面区分 renderer 策略变化与坐标/window-local 映射问题。
 7. 如果只想验证仓库基线，直接跑 fixture + smoke，不要先在复杂第三方 app 上排查。
 8. 排查 Linux runtime 时，先确认目标命令是否由桌面用户运行，再用 `open-computer-use call list_apps` 和 `open-computer-use snapshot <app>` 区分 session/env 问题与 AT-SPI tree/action 问题。如果是 Codex MCP，重新执行 `open-computer-use install-codex-mcp` 后重启 Codex，确认配置仍是 `open-computer-use mcp`。

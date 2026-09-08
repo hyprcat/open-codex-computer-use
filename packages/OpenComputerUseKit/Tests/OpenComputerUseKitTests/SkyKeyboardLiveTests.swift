@@ -211,7 +211,8 @@ final class SkyKeyboardLiveTests: XCTestCase {
         )
 
         if let cursorBefore, let cursorAfter = CGEvent(source: nil)?.location {
-            XCTAssertLessThan(hypot(cursorAfter.x - cursorBefore.x, cursorAfter.y - cursorBefore.y), 0.5)
+            print("sky_key live test: cursor before=\(cursorBefore) after=\(cursorAfter)")
+            XCTAssertLessThan(hypot(cursorAfter.x - cursorBefore.x, cursorAfter.y - cursorBefore.y), 0.5, "sky_key must not move the real pointer (a user moving the mouse during the run also trips this)")
         }
 
         let orderedAfter = windows()

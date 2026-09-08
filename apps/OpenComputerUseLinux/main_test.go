@@ -415,3 +415,22 @@ func TestLinuxKeyMethodSchemaAndUnsupportedSkyKey(t *testing.T) {
 		t.Fatalf("press_key sky_key result = %#v", result)
 	}
 }
+
+func TestLinuxWindowPlacementSchemaAndUnsupportedAgentDisplay(t *testing.T) {
+	tool := findToolDefinition(t, "get_app_state")
+	properties := tool.InputSchema["properties"].(map[string]any)
+	placement := properties["window_placement"].(map[string]any)
+	if strings.Join(placement["enum"].([]string), ",") != "keep,agent_display,restore" {
+		t.Fatalf("window_placement enum = %#v", placement["enum"])
+	}
+	if got, err := parseWindowPlacement(" AGENT_DISPLAY "); err != nil || got != "agent_display" {
+		t.Fatalf("parseWindowPlacement = %q, %v", got, err)
+	}
+	if _, err := parseWindowPlacement("park"); err == nil {
+		t.Fatal("parseWindowPlacement(park) should fail")
+	}
+	result := newService().callTool("get_app_state", map[string]any{"app": "Text Editor", "window_placement": "agent_display"})
+	if !result.IsError || result.Content[0].Text != "window_placement 'agent_display' is not supported on Linux" {
+		t.Fatalf("agent_display result = %#v", result)
+	}
+}

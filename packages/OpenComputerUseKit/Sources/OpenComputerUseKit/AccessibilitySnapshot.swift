@@ -135,6 +135,8 @@ public struct AppSnapshot {
     let focusedSummary: String?
     let focusedElement: AXUIElement?
     let selectedText: String?
+    /// The AX window the tree was rendered from (nil for fixture snapshots).
+    let windowElement: AXUIElement?
 
     let elements: [Int: ElementRecord]
 
@@ -280,7 +282,7 @@ enum SnapshotBuilder {
                     }
                 }
             } else {
-                occlusionNote = "Note: this window is covered or on another Space, so the app hides its web content and it is not in the tree. Bring the window into view once; covering it afterwards keeps working."
+                occlusionNote = "Note: this window is covered or on another Space, so the app hides its web content and it is not in the tree. Bring the window into view once (covering it afterwards keeps working), or call get_app_state with window_placement=agent_display to park it on the agent's own display."
             }
         }
 
@@ -307,6 +309,7 @@ enum SnapshotBuilder {
             focusedSummary: renderer.focusedSummary,
             focusedElement: focusedElement,
             selectedText: selectedText,
+            windowElement: rootElement,
             elements: renderer.records
         )
     }
@@ -463,6 +466,7 @@ enum SnapshotBuilder {
             focusedSummary: focusedSummary,
             focusedElement: nil,
             selectedText: nil,
+            windowElement: nil,
             elements: records
         )
     }

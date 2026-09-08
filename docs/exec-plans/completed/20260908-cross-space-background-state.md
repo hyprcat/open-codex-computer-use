@@ -11,7 +11,7 @@
   - WindowServer occlusion keep-alive（已完成）与 Chromium 系懒加载 AX tree 的重走（已完成）。
   - `sky_click` / `sky_key` 接受 off-screen 窗口（已完成）。
   - 在真实的第二个桌面 Space 上做端到端回归（待机器上存在第二个 Desktop）。
-  - 已经被遮挡 / 已在其他 Space 的 Chromium 窗口：评估 agent 专用 virtual display（`CGVirtualDisplay`）方案。
+  - 已经被遮挡 / 已在其他 Space 的 Chromium 窗口：agent 专用 virtual display（`CGVirtualDisplay`）做成显式 `window_placement`（已完成）。
 - 不包含：
   - 任何会显示窗口给用户、切换用户 Space 或前台 app 的 fallback。
   - Windows / Linux runtime。
@@ -49,7 +49,7 @@
 - [x] keep-alive、off-screen 捕获、懒加载重走、`sky_click` 放宽校验，单元与实机回归通过。
 - [x] Desktop 2 端到端回归：`CrossSpaceLiveTests` 在真实第二个 Desktop 上通过（snapshot / 截图 / `sky_click` / `sky_key`，active Space 与前台不变）。
 - [x] virtual display spike：已被遮挡的 Chrome 窗口放到 agent virtual display 后页面可见、snapshot / sky_click / sky_key 全部生效，用户 Space、前台与鼠标不变。
-- [ ] virtual display 产品化决策：opt-in 的 “agent display” 模式、窗口归还、排列与鼠标滑入处理、ObjC 包装。
+- [x] virtual display 产品化：`get_app_state.window_placement=agent_display / restore`，ObjC shim、`AgentDisplay`、三平台协议、`AgentDisplayLiveTests`。排列与鼠标滑入未做额外处理，记录在参考文档。
 
 ## 决策记录
 
@@ -57,3 +57,4 @@
 - 2026-09-08：已被遮挡的窗口不做任何显示式 fallback，只在 tree 里说明；下一步评估 virtual display。
 - 2026-09-08：第三方进程不能跨 Space 移动别的 app 的窗口（window-management bridge gate），运行时也不需要；测试改为在目标 Desktop 上启动目标。
 - 2026-09-08：virtual display spike 证明 macOS 层面可行（细节见 `docs/references/macos-window-visibility-and-spaces.md`）；产品化作为独立后续，不混进本轮 PR。
+- 2026-09-08：agent display 做成显式 `window_placement`，默认 `keep` 不移动任何窗口；`restore` 与进程退出恢复原位。计划归档。
