@@ -1612,7 +1612,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
-    func testSkyClickWindowValidationRequiresMatchingOnScreenOwner() {
+    func testSkyClickWindowValidationRequiresMatchingOwner() {
         let matching: [String: Any] = [
             kCGWindowNumber as String: NSNumber(value: UInt32(321)),
             kCGWindowOwnerPID as String: NSNumber(value: Int32(1234)),
@@ -1627,12 +1627,17 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertFalse(
             skyClickWindowMatchesTarget(windowInfo: [matching], windowID: 321, pid: 1235)
         )
+    }
 
-        var offScreen = matching
-        offScreen[kCGWindowIsOnscreen as String] = NSNumber(value: false)
-        XCTAssertFalse(
-            skyClickWindowMatchesTarget(windowInfo: [offScreen], windowID: 321, pid: 1234)
-        )
+    func testWindowLooksUnoccludedSamplesAGrid() {
+        let bounds = CGRect(x: 100, y: 100, width: 400, height: 300)
+        XCTAssertTrue(windowLooksUnoccluded(bounds: bounds, coveringBounds: []))
+        XCTAssertFalse(windowLooksUnoccluded(bounds: bounds, coveringBounds: [bounds.insetBy(dx: -10, dy: -10)]))
+        XCTAssertFalse(windowLooksUnoccluded(bounds: bounds, coveringBounds: [
+            CGRect(x: 0, y: 0, width: 300, height: 1000), CGRect(x: 300, y: 0, width: 1000, height: 1000),
+        ]), "two windows that jointly cover the target count as occlusion")
+        XCTAssertTrue(windowLooksUnoccluded(bounds: bounds, coveringBounds: [CGRect(x: 100, y: 100, width: 360, height: 300)]), "an exposed strip keeps it visible")
+        XCTAssertFalse(windowLooksUnoccluded(bounds: .zero, coveringBounds: []))
     }
 
     func testSkyLightCapabilityReportsMissingSymbols() {
@@ -1727,7 +1732,19 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertTrue(skyKeyWindowMatchesTarget(windowInfo: [offScreen], windowID: 321, pid: 1234))
         XCTAssertFalse(skyKeyWindowMatchesTarget(windowInfo: [offScreen], windowID: 321, pid: 1235))
         XCTAssertFalse(skyKeyWindowMatchesTarget(windowInfo: [offScreen], windowID: 322, pid: 1234))
-        XCTAssertFalse(skyClickWindowMatchesTarget(windowInfo: [offScreen], windowID: 321, pid: 1234), "sky_click keeps requiring an on-screen window")
+        XCTAssertTrue(skyClickWindowMatchesTarget(windowInfo: [offScreen], windowID: 321, pid: 1234), "sky_click also accepts covered or other-Space windows")
+    }
+
+    func testLazyWebAccessibilityDetectionUsesShippedFrameworks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ocu-lazy-ax-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let chromium = root.appendingPathComponent("Chromium.app/Contents/Frameworks/Chromium Framework.framework")
+        try FileManager.default.createDirectory(at: chromium, withIntermediateDirectories: true)
+        let native = root.appendingPathComponent("Native.app/Contents/Frameworks/Sparkle.framework")
+        try FileManager.default.createDirectory(at: native, withIntermediateDirectories: true)
+        XCTAssertTrue(appHasLazyWebAccessibility(bundleURL: root.appendingPathComponent("Chromium.app")))
+        XCTAssertFalse(appHasLazyWebAccessibility(bundleURL: root.appendingPathComponent("Native.app")))
+        XCTAssertFalse(appHasLazyWebAccessibility(bundleURL: nil))
     }
 
     func testKeyMethodParsingAndPolicy() throws {

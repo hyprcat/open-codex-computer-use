@@ -77,24 +77,15 @@ func skyClickEventRecipe(clickCount: Int) throws -> [SkyClickEventStep] {
     return steps
 }
 
+/// The window must still exist and belong to the snapshot's process. It does
+/// not need to be on-screen: SkyLight routes by window id, so a covered window
+/// or one on another Space is a valid target (verified live on macOS 27).
 func skyClickWindowMatchesTarget(
     windowInfo: [[String: Any]],
     windowID: CGWindowID,
     pid: pid_t
 ) -> Bool {
-    windowInfo.contains { info in
-        guard
-            let number = info[kCGWindowNumber as String] as? NSNumber,
-            number.uint32Value == windowID,
-            let ownerPID = info[kCGWindowOwnerPID as String] as? NSNumber,
-            ownerPID.int32Value == pid,
-            let onScreen = info[kCGWindowIsOnscreen as String] as? NSNumber
-        else {
-            return false
-        }
-
-        return onScreen.boolValue
-    }
+    skyKeyWindowMatchesTarget(windowInfo: windowInfo, windowID: windowID, pid: pid)
 }
 
 enum SkyClickDispatcher {
@@ -222,17 +213,19 @@ enum SkyClickDispatcher {
             throw ComputerUseError.message("sky_click target is outside the snapshot window bounds")
         }
 
-        let windowInfo = CGWindowListCopyWindowInfo(
-            [.optionIncludingWindow],
-            target.windowID
-        ) as? [[String: Any]] ?? []
+        if NSRunningApplication(processIdentifier: target.pid)?.isHidden == true {
+            throw ComputerUseError.stateUnavailable(
+                "sky_click target app is hidden. Unhide it first; sky_click does not change window visibility."
+            )
+        }
+        let windowInfo = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
         guard skyClickWindowMatchesTarget(
             windowInfo: windowInfo,
             windowID: target.windowID,
             pid: target.pid
         ) else {
             throw ComputerUseError.stateUnavailable(
-                "sky_click target window is stale, off-screen, or no longer owned by the target app. Run get_app_state again."
+                "sky_click target window no longer exists or is no longer owned by the target app. Run get_app_state again."
             )
         }
     }

@@ -97,6 +97,27 @@ let screenshotResultMaxDimension: CGFloat = 1280
 let screenshotResultMinScale: CGFloat = 0.25
 private let windowVisibilityRecoveryDelay: TimeInterval = 0.7
 private let axWebAreaRole = "AXWebArea"
+// Chrome needs up to ~2s after AXManualAccessibility before the web tree exists.
+private let webAreaRewalkAttempts = 30
+private let webAreaRewalkInterval: TimeInterval = 0.1
+
+/// Layer-0 windows ordered above `windowID` on screen, excluding this process
+/// (the visual cursor overlay must not count as cover).
+func coveringWindowBounds(above windowID: CGWindowID) -> [CGRect] {
+    let infoList = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow, .excludeDesktopElements], windowID) as? [[String: Any]] ?? []
+    let ownPID = ProcessInfo.processInfo.processIdentifier
+    return infoList.compactMap { info in
+        guard
+            let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t, ownerPID != ownPID,
+            let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
+            let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
+            let bounds = CGRect(dictionaryRepresentation: boundsDictionary)
+        else {
+            return nil
+        }
+        return bounds
+    }
+}
 private let axContentsAttribute = "AXContents"
 private let axVisibleChildrenAttribute = "AXVisibleChildren"
 private let compactGenericActionTargetMaxWidth: CGFloat = 240
@@ -164,7 +185,8 @@ enum SnapshotBuilder {
         }
 
         let appElement = AXUIElementCreateApplication(app.pid)
-        enableBestEffortAccessibilityModes(appElement)
+        let lazyWebAccessibility = enableBestEffortAccessibilityModes(appElement)
+            || appHasLazyWebAccessibility(bundleURL: app.runningApplication.bundleURL)
         let systemWide = AXUIElementCreateSystemWide()
         var focusedApplication = copyElement(systemWide, attribute: kAXFocusedApplicationAttribute)
         var focusedWindow = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
@@ -207,7 +229,8 @@ enum SnapshotBuilder {
             focusedApplication: focusedApplication,
             systemWide: systemWide,
             textLimit: textLimit,
-            treeLimits: treeLimits
+            treeLimits: treeLimits,
+            lazyWebAccessibility: lazyWebAccessibility
         )
     }
 
@@ -220,7 +243,8 @@ enum SnapshotBuilder {
         focusedApplication: AXUIElement?,
         systemWide: AXUIElement,
         textLimit: SnapshotTextLimit,
-        treeLimits: AccessibilityTreeLimits
+        treeLimits: AccessibilityTreeLimits,
+        lazyWebAccessibility: Bool
     ) -> AppSnapshot {
         let windowBounds = windowCapture.bounds
         let screenshotPNGData = windowCapture.pngDataIfAvailable()
@@ -235,10 +259,40 @@ enum SnapshotBuilder {
 
         var renderer = TreeRenderer(context: context)
         renderer.render(rootElement)
+
+        // Pin the window's visible state (WindowServer occlusion notifications
+        // off) so covering it or moving it to another Space later does not hide
+        // its content. Only possible while it is currently unoccluded.
+        let pinned = WindowOcclusionKeepAlive.shared.keepVisible(windowID: windowCapture.windowID, bounds: windowBounds)
+
+        // Engines that accept AXManualAccessibility build their web tree lazily
+        // and drop it while hidden. Re-walk briefly while the window is visible;
+        // when it is hidden, say so instead of waiting.
+        var occlusionNote: String?
+        if lazyWebAccessibility, !renderer.hasWebArea {
+            if pinned {
+                for _ in 0..<webAreaRewalkAttempts {
+                    Thread.sleep(forTimeInterval: webAreaRewalkInterval)
+                    renderer = TreeRenderer(context: context)
+                    renderer.render(rootElement)
+                    if renderer.hasWebArea {
+                        break
+                    }
+                }
+            } else {
+                occlusionNote = "Note: this window is covered or on another Space, so the app hides its web content and it is not in the tree. Bring the window into view once; covering it afterwards keeps working."
+            }
+        }
+
         if let menuBar = copyElement(appElement, attribute: kAXMenuBarAttribute),
            !CFEqual(menuBar, rootElement)
         {
             renderer.render(menuBar)
+        }
+
+        var treeLines = renderer.lines
+        if let occlusionNote {
+            treeLines.append(occlusionNote)
         }
 
         return AppSnapshot(
@@ -249,7 +303,7 @@ enum SnapshotBuilder {
             targetWindowLayer: windowCapture.layer,
             screenshotPNGData: screenshotPNGData,
             mode: .accessibility,
-            treeLines: renderer.lines,
+            treeLines: treeLines,
             focusedSummary: renderer.focusedSummary,
             focusedElement: focusedElement,
             selectedText: selectedText,
@@ -414,12 +468,18 @@ enum SnapshotBuilder {
     }
 }
 
-private func enableBestEffortAccessibilityModes(_ appElement: AXUIElement) {
+/// Returns `true` when the app accepts `AXManualAccessibility`, i.e. it builds
+/// its (web) accessibility tree lazily on request. Native AppKit apps report
+/// the attribute as unsupported, which is the app-agnostic signal used instead
+/// of bundle-identifier lists.
+@discardableResult
+private func enableBestEffortAccessibilityModes(_ appElement: AXUIElement) -> Bool {
     // Chromium/Electron apps may withhold parts of their AX tree until manual
     // accessibility is enabled. These private attributes are best-effort and
     // harmlessly fail on apps that do not support them.
-    _ = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    let manual = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
     _ = AXUIElementSetAttributeValue(appElement, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    return manual == .success
 }
 
 private struct WindowCapture {
@@ -429,7 +489,15 @@ private struct WindowCapture {
     let image: CGImage?
 
     static func resolve(for pid: pid_t, titleHint: String?) -> WindowCapture? {
-        guard let infoList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+        // On-screen windows first (front-to-back order is meaningful there);
+        // fall back to every window of the pid so a window on another Space
+        // still resolves instead of triggering the activate-and-raise recovery.
+        resolve(for: pid, titleHint: titleHint, options: [.optionOnScreenOnly])
+            ?? resolve(for: pid, titleHint: titleHint, options: [.optionAll])
+    }
+
+    private static func resolve(for pid: pid_t, titleHint: String?, options: CGWindowListOption) -> WindowCapture? {
+        guard let infoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return nil
         }
 
@@ -468,7 +536,7 @@ private struct WindowCapture {
 
     private static func captureImage(windowID: CGWindowID, bounds: CGRect) -> CGImage? {
         try? BlockingAsyncBridge.run(timeout: screenshotCaptureTimeout) {
-            let shareableContent = try await SCShareableContent.current
+            let shareableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let window = shareableContent.windows.first(where: { $0.windowID == windowID }) else {
                 return nil
             }
@@ -669,6 +737,7 @@ private struct RenderContext {
 
 private struct TreeRenderer {
     let context: RenderContext
+    var hasWebArea = false
     var nextIndex = 0
     var lines: [String] = []
     var records: [Int: ElementRecord] = [:]
@@ -692,6 +761,9 @@ private struct TreeRenderer {
         let index = nextIndex
 
         let role = stringValue(of: root, attribute: kAXRoleAttribute) ?? "AXUnknown"
+        if role == axWebAreaRole {
+            hasWebArea = true
+        }
         let subrole = stringValue(of: root, attribute: kAXSubroleAttribute)
         let baseRoleText = roleDescription(of: root, role: role, subrole: subrole)
         let label = stringValue(of: root, attribute: kAXDescriptionAttribute)

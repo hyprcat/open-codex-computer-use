@@ -72,6 +72,7 @@ func skyLightKeyWindowRecords(windowID: CGWindowID) -> [[UInt8]] {
 
 struct SkyLightSPICapability: Equatable, Sendable {
     let missingSymbols: [String]
+    var feature: String = "click"
 
     var isAvailable: Bool {
         missingSymbols.isEmpty
@@ -82,7 +83,7 @@ struct SkyLightSPICapability: Equatable, Sendable {
             return "available"
         }
 
-        return "missing private click symbols: \(missingSymbols.joined(separator: ", "))"
+        return "missing private \(feature) symbols: \(missingSymbols.joined(separator: ", "))"
     }
 }
 
@@ -102,6 +103,8 @@ final class SkyLightSPI: @unchecked Sendable {
     private static let setWindowLocationSymbol = "CGEventSetWindowLocation"
     private static let postEventRecordSymbol = "SLPSPostEventRecordTo"
     private static let getProcessForPIDSymbol = "GetProcessForPID"
+    private static let mainConnectionSymbol = "SLSMainConnectionID"
+    private static let enableWindowOcclusionNotificationsSymbol = "SLSPackagesEnableWindowOcclusionNotifications"
     private static let applicationServicesPath = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
 
     private typealias PostToPidFunction = @convention(c) (pid_t, UnsafeMutableRawPointer?) -> Void
@@ -112,6 +115,10 @@ final class SkyLightSPI: @unchecked Sendable {
     private typealias SetWindowLocationFunction = @convention(c) (UnsafeMutableRawPointer?, Double, Double) -> Void
     private typealias PostEventRecordFunction = @convention(c) (UnsafeRawPointer?, UnsafePointer<UInt8>?) -> Int32
     private typealias GetProcessForPIDFunction = @convention(c) (pid_t, UnsafeMutableRawPointer?) -> Int32
+    private typealias MainConnectionFunction = @convention(c) () -> UInt32
+    // (cid, wid, enable, previousStateOut) — the out pointer is optional; the
+    // ABI was read from the function prologue on macOS 27 (strb w21 / cbz x19).
+    private typealias EnableWindowOcclusionNotificationsFunction = @convention(c) (UInt32, CGWindowID, UInt8, UnsafeMutablePointer<UInt8>?) -> Int32
 
     private let frameworkHandle: UnsafeMutableRawPointer?
     private let applicationServicesHandle: UnsafeMutableRawPointer?
@@ -120,8 +127,13 @@ final class SkyLightSPI: @unchecked Sendable {
     private let setWindowLocationFunction: SetWindowLocationFunction?
     private let postEventRecordFunction: PostEventRecordFunction?
     private let getProcessForPIDFunction: GetProcessForPIDFunction?
+    private let mainConnectionFunction: MainConnectionFunction?
+    private let enableWindowOcclusionNotificationsFunction: EnableWindowOcclusionNotificationsFunction?
 
     let capability: SkyLightSPICapability
+    /// Occlusion keep-alive (`WindowOcclusionKeepAlive`) is a separate optional
+    /// capability so a missing symbol never disables `sky_click` / `sky_key`.
+    let occlusionCapability: SkyLightSPICapability
 
     private init() {
         let handle = dlopen(Self.frameworkPath, RTLD_LAZY | RTLD_GLOBAL)
@@ -133,6 +145,8 @@ final class SkyLightSPI: @unchecked Sendable {
         setWindowLocationFunction = Self.resolve(handle: handle, symbol: Self.setWindowLocationSymbol)
         postEventRecordFunction = Self.resolve(handle: handle, symbol: Self.postEventRecordSymbol)
         getProcessForPIDFunction = Self.resolve(handle: appServicesHandle, symbol: Self.getProcessForPIDSymbol)
+        mainConnectionFunction = Self.resolve(handle: handle, symbol: Self.mainConnectionSymbol)
+        enableWindowOcclusionNotificationsFunction = Self.resolve(handle: handle, symbol: Self.enableWindowOcclusionNotificationsSymbol)
 
         var missingSymbols: [String] = []
         if postToPidFunction == nil {
@@ -151,6 +165,32 @@ final class SkyLightSPI: @unchecked Sendable {
             missingSymbols.append(Self.getProcessForPIDSymbol)
         }
         capability = SkyLightSPICapability(missingSymbols: missingSymbols)
+
+        var missingOcclusionSymbols: [String] = []
+        if mainConnectionFunction == nil {
+            missingOcclusionSymbols.append(Self.mainConnectionSymbol)
+        }
+        if enableWindowOcclusionNotificationsFunction == nil {
+            missingOcclusionSymbols.append(Self.enableWindowOcclusionNotificationsSymbol)
+        }
+        occlusionCapability = SkyLightSPICapability(missingSymbols: missingOcclusionSymbols, feature: "occlusion")
+    }
+
+    /// Enable or disable WindowServer occlusion notifications for one window of
+    /// another process. Returns the previous state. Disabling pins the target's
+    /// AppKit `occlusionState` at its current value.
+    @discardableResult
+    func setWindowOcclusionNotificationsEnabled(_ enabled: Bool, windowID: CGWindowID) throws -> Bool {
+        guard let mainConnectionFunction, let enableWindowOcclusionNotificationsFunction else {
+            throw ComputerUseError.message("occlusion keep-alive is unavailable: \(occlusionCapability.unavailableReason)")
+        }
+
+        var previous: UInt8 = 0
+        let status = enableWindowOcclusionNotificationsFunction(mainConnectionFunction(), windowID, enabled ? 1 : 0, &previous)
+        guard status == 0 else {
+            throw ComputerUseError.message("SLSPackagesEnableWindowOcclusionNotifications failed (CGError \(status))")
+        }
+        return previous != 0
     }
 
     func postToPid(_ event: CGEvent, pid: pid_t) throws {
