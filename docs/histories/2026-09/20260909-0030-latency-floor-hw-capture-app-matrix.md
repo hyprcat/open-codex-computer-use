@@ -26,6 +26,7 @@
 - 基准（50 轮，未 pin，默认参数）：`sky_click` 50/50、`sky_key` 50/50，前台不变。
 - 五个实机 live test（sky_key、sky_click、keep-alive、Desktop 2、agent display）在新默认值下全部通过。
 - 多 app 扫描：有窗口的 9 个 app 全部拿到 tree 与截图（含全屏 Space 的 VS Code、Blender）；System Settings 与 Slack 输入并清理成功。
+- agent display 模式扫描（`OPEN_COMPUTER_USE_APP_MATRIX_PARK=1`）：8 个非全屏窗口停靠、snapshot、输入、恢复全部成功，前台与鼠标不变，显示器结束后移除。
 
 ### 📁 Files Modified
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/TimingLog.swift`、`SkyLightSPI.swift`、`SkyClickSimulation.swift`、`SkyKeyboardSimulation.swift`、`InputSimulation.swift`、`AccessibilitySnapshot.swift`

@@ -77,6 +77,8 @@ agent display：创建显示器约 330–350 ms，WindowServer 登记 Space 后�
 - 输入验证：System Settings 搜索框（原生）与 Slack 的 “Find a conversation” 搜索框（Electron）都收到标记并可删除；Safari 的候选是 popover 子元素，坐标在主窗口之外，`sky_click` 按设计拒绝。
 - “cgWindowNotFound” 的行是没有窗口的 app（Notes、Mail、Excel、Activity Monitor 等只在后台运行），read-only policy 下不会去激活它们，这是预期结果。
 
+同一扫描加 `OPEN_COMPUTER_USE_APP_MATRIX_PARK=1`（agent display 模式）：把每个非全屏窗口停靠到 agent display，在那里 snapshot、点击、输入、清理，再移回原位。8 个 app（Zed、TextEdit、Safari、Alma、Slack、Chrome、System Settings、KiCad）全部：停靠后窗口位于 agent display、tree 与截图完整、`RESTORE back=true`（回到原坐标 2 px 内）；Slack 与 System Settings 在停靠状态下输入并清理成功，click+type 108–132 ms；前台 app、鼠标位置不变，结束后显示器消失。停靠耗时 520–910 ms（每个 app 都重新创建显示器；显示器已存在时约 150–230 ms），恢复 500–1150 ms（轮询窗口 frame 回到原位）。全屏 Space 里的窗口（VS Code、Blender）不能移动 frame，跳过。
+
 物理键盘路由：目标处于 synthetic key 状态时，HID 键盘事件仍然送到真实前台 app，不会进入目标窗口（`KeyRoutingExperiment` 实验，未入库）。
 
 ## 还没有解决的部分
