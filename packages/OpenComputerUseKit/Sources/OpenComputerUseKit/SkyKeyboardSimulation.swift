@@ -89,9 +89,8 @@ func skyKeyWindowMatchesTarget(
 /// pointer never moves.
 enum SkyKeyboardDispatcher {
     private static let dispatchLock = NSLock()
-    // ponytail: fixed settle; measured ~215ms for Chrome to become key on macOS 27.
-    // Replace with an AXFocusedWindow poll if a target ever needs longer.
-    static let keyWindowSettle: TimeInterval = 0.3
+    /// Fixed settle for the target to make the window key (Chrome: ~215ms on macOS 27).
+    static let keyWindowFallbackSettle: TimeInterval = 0.3
     static let releaseSettle: TimeInterval = 0.1
 
     static func typeText(
@@ -151,20 +150,35 @@ enum SkyKeyboardDispatcher {
             return
         }
 
+        let start = TimingLog.now()
         let focusContext = try spi.beginSyntheticTargetFocus(
             targetPID: target.pid,
             targetWindowID: target.windowID
         )
         do {
             try spi.makeSyntheticTargetWindowKey(focusContext)
-            Thread.sleep(forTimeInterval: keyWindowSettle)
+            TimingLog.log("sky_key.activate", since: start)
+            let keyStart = TimingLog.now()
+            waitForKeyWindow(target, spi: spi)
+            TimingLog.log("sky_key.key_window", since: keyStart)
+            let deliverStart = TimingLog.now()
             try body()
+            TimingLog.log("sky_key.deliver", since: deliverStart)
             Thread.sleep(forTimeInterval: releaseSettle)
         } catch {
             try? spi.endSyntheticTargetFocus(focusContext)
             throw error
         }
         try spi.endSyntheticTargetFocus(focusContext)
+        TimingLog.log("sky_key.total", since: start)
+    }
+
+    /// Chrome needs ~215ms after the key-window records before its page has
+    /// focus; no cross-process observable reports that moment reliably (the AX
+    /// focused window and focused element both report early), so keep a fixed
+    /// settle and log it.
+    private static func waitForKeyWindow(_ target: SkyKeyboardTarget, spi: SkyLightSPI) {
+        Thread.sleep(forTimeInterval: keyWindowFallbackSettle)
     }
 
     private static func validate(target: SkyKeyboardTarget) throws {

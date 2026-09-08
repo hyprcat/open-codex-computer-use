@@ -118,7 +118,9 @@ enum SkyClickDispatcher {
         }
 
         dispatchLock.lock()
+        let start = TimingLog.now()
         defer {
+            TimingLog.log("sky_click.total", since: start)
             dispatchLock.unlock()
         }
 

@@ -45,6 +45,21 @@ agent 第一次接触时就已经被遮挡或已在其他 Space 的 Chromium 窗
 - spike 里用 Swift KVC / IMP 直接驱动这些类会在 dealloc 崩溃；正式实现放在 ObjC shim 里，ARC 管理对象生命周期，`AgentDisplayLiveTests` 验证创建、停靠、点击输入、恢复与销毁全程无崩溃，显示器数量恢复。
 - 已知副作用：agent 显示器排在主屏右侧，鼠标可能滑入；停靠期间窗口不在用户桌面上。所以它是显式 opt-in，不进入默认路径。
 
+## 实测耗时（macOS 27.0，M 系列，2026-09-08）
+
+被完全遮挡的隔离 Chrome，25 轮，全部成功，前台不变：
+
+| 动作 | 调用返回 p50 | 页面观察到 p50 | p95（观察到） |
+| --- | --- | --- | --- |
+| `sky_click` | 320 ms | 389 ms | 398 ms |
+| `sky_key` `type_text` | 224 ms | 270 ms | 279 ms |
+
+`sky_click` 的成本几乎全是 Cua recipe 里的固定间隔（primer 后 100 ms、renderer settle 100 ms、focus record 前后各 40 ms）；`sky_key` 是 activation 40 ms + Chrome 变 key 的 300 ms 固定 settle + release 100 ms + deactivate 40 ms。Chrome 变 key 没有可靠的跨进程观测点（AX focused window / focused element 都会提前报告），所以这 300 ms 保留为固定值。
+
+agent display：创建显示器约 330–350 ms，WindowServer 登记 Space 后就绪约 400–570 ms，停靠窗口约 140–230 ms，恢复约 260 ms（都是轮询到条件满足即返回）。snapshot：窗口捕获约 90–155 ms，AX tree 遍历约 25–80 ms。
+
+物理键盘路由：目标处于 synthetic key 状态时，HID 键盘事件仍然送到真实前台 app，不会进入目标窗口（`KeyRoutingExperiment` 实验，未入库）。
+
 ## 还没有解决的部分
 
 - `CrossSpaceLiveTests` 需要机器上有第二个 Desktop（Mission Control 里手动创建；`SLSSpaceCreate` 造的 Space 不是 managed Desktop，Dock 的 Mission Control AX tree 只在鼠标悬停时才暴露 Spaces bar）。测试通过 `SLSManagedDisplaySetCurrentSpace` 切到 Desktop 2 启动 Chrome 再切回来，因为窗口不能被第三方进程跨 Space 移动。

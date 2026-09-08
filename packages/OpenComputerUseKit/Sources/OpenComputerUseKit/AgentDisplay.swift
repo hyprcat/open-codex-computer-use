@@ -48,9 +48,13 @@ final class AgentDisplay: @unchecked Sendable {
     static let shared = AgentDisplay()
 
     static let displaySize = CGSize(width: 1920, height: 1080)
-    // ponytail: fixed waits for the display and the window move to settle.
-    static let displaySettle: TimeInterval = 2.0
-    static let moveSettle: TimeInterval = 1.0
+    // Upper bounds for the polls; the observed values are far lower and are
+    // logged with OPEN_COMPUTER_USE_DEBUG_TIMING=1.
+    static let displaySettle: TimeInterval = 3.0
+    static let moveSettle: TimeInterval = 2.0
+    // Fallback sleeps when the observation SPIs are unavailable.
+    static let displayFallbackSettle: TimeInterval = 0.5
+    static let moveFallbackSettle: TimeInterval = 1.0
 
     struct ParkedWindow {
         let pid: pid_t
@@ -61,6 +65,7 @@ final class AgentDisplay: @unchecked Sendable {
     private let lock = NSLock()
     private var handle: UnsafeMutableRawPointer?
     private(set) var displayID: CGDirectDisplayID = 0
+    private(set) var displaySpaceIDs: Set<UInt64> = []
     private var parked: [CGWindowID: ParkedWindow] = [:]
     private var exitHookInstalled = false
 
@@ -100,11 +105,43 @@ final class AgentDisplay: @unchecked Sendable {
         }
         let size = axSize(window) ?? CGSize(width: 800, height: 600)
         let target = agentDisplayPlacement(windowSize: size, displayBounds: bounds)
+        let start = TimingLog.now()
         try setAXPosition(window, target)
         parked[windowID] = ParkedWindow(pid: pid, element: window, originalPosition: position)
         installExitHookIfNeeded()
-        Thread.sleep(forTimeInterval: Self.moveSettle)
+        waitForWindow(windowID, toLandOn: displaySpaceIDs, or: bounds)
+        TimingLog.log("agent_display.park", since: start)
         return bounds
+    }
+
+    /// Wait until the window's frame sits inside the display and, when the
+    /// Space SPI is available, WindowServer also reports it on one of the
+    /// display's Spaces. Space membership alone precedes the frame update.
+    private func waitForWindow(_ windowID: CGWindowID, toLandOn spaceIDs: Set<UInt64>, or bounds: CGRect) {
+        let spi = SkyLightSPI.shared
+        let landed = waitUntil(timeout: Self.moveSettle) {
+            guard let frame = Self.windowFrame(windowID),
+                  bounds.contains(CGPoint(x: frame.minX + 1, y: frame.minY + 1))
+            else { return false }
+            if !spaceIDs.isEmpty, let spaces = spi.spaces(forWindow: windowID) {
+                return spaces.contains(where: spaceIDs.contains)
+            }
+            return true
+        }
+        if landed == nil {
+            Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
+        }
+    }
+
+    private static func windowFrame(_ windowID: CGWindowID) -> CGRect? {
+        let infoList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        for info in infoList {
+            guard let number = info[kCGWindowNumber as String] as? NSNumber, number.uint32Value == windowID,
+                  let dictionary = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: dictionary) else { continue }
+            return bounds
+        }
+        return nil
     }
 
     /// Put a parked window back where it was.
@@ -114,8 +151,16 @@ final class AgentDisplay: @unchecked Sendable {
         guard let entry = parked.removeValue(forKey: windowID) else {
             return
         }
+        let start = TimingLog.now()
         try setAXPosition(entry.element, entry.originalPosition)
-        Thread.sleep(forTimeInterval: Self.moveSettle)
+        let back = waitUntil(timeout: Self.moveSettle) {
+            guard let frame = Self.windowFrame(windowID) else { return false }
+            return abs(frame.minX - entry.originalPosition.x) < 1 && abs(frame.minY - entry.originalPosition.y) < 1
+        }
+        if back == nil {
+            Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
+        }
+        TimingLog.log("agent_display.restore", since: start)
         destroyDisplayIfIdle()
     }
 
@@ -126,7 +171,7 @@ final class AgentDisplay: @unchecked Sendable {
             try? setAXPosition(entry.element, entry.originalPosition)
         }
         if !parked.isEmpty {
-            Thread.sleep(forTimeInterval: Self.moveSettle)
+            Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
         }
         parked.removeAll()
         destroyDisplayIfIdle()
@@ -141,6 +186,9 @@ final class AgentDisplay: @unchecked Sendable {
         guard isSupported else {
             throw ComputerUseError.message("window_placement 'agent_display' is unavailable: CGVirtualDisplay is not present on this macOS")
         }
+        let spi = SkyLightSPI.shared
+        let spacesBefore = Set((spi.managedDisplaySpaces() ?? [:]).values.flatMap { $0 })
+        let start = TimingLog.now()
         var newHandle: UnsafeMutableRawPointer?
         let id = ocu_virtual_display_create("Open Computer Use", UInt32(Self.displaySize.width), UInt32(Self.displaySize.height), 60, &newHandle)
         guard id != 0, let newHandle else {
@@ -148,17 +196,27 @@ final class AgentDisplay: @unchecked Sendable {
         }
         handle = newHandle
         displayID = id
-        let deadline = Date().addingTimeInterval(Self.displaySettle)
-        while Date() < deadline {
-            if let bounds = displayBounds, !bounds.isEmpty {
-                // Let WindowServer finish adding the display's Space before parking.
-                Thread.sleep(forTimeInterval: 0.5)
-                return bounds
-            }
-            Thread.sleep(forTimeInterval: 0.1)
+        TimingLog.log("agent_display.create", since: start)
+
+        // Ready means WindowServer reports the display's bounds and has given
+        // it a Space; without the Space SPI, fall back to a fixed settle.
+        var newSpaces: Set<UInt64> = []
+        let ready = waitUntil(timeout: Self.displaySettle) {
+            guard let bounds = self.displayBounds, !bounds.isEmpty else { return false }
+            guard let displays = spi.managedDisplaySpaces() else { return true }
+            newSpaces = Set(displays.values.flatMap { $0 }).subtracting(spacesBefore)
+            return !newSpaces.isEmpty
         }
-        destroyDisplay()
-        throw ComputerUseError.message("window_placement 'agent_display' timed out waiting for the agent display")
+        if ready == nil, displayBounds?.isEmpty != false {
+            destroyDisplay()
+            throw ComputerUseError.message("window_placement 'agent_display' timed out waiting for the agent display")
+        }
+        if newSpaces.isEmpty {
+            Thread.sleep(forTimeInterval: Self.displayFallbackSettle)
+        }
+        displaySpaceIDs = newSpaces
+        TimingLog.log("agent_display.ready", since: start)
+        return displayBounds ?? .zero
     }
 
     private func destroyDisplayIfIdle() {
@@ -173,6 +231,7 @@ final class AgentDisplay: @unchecked Sendable {
         }
         handle = nil
         displayID = 0
+        displaySpaceIDs = []
     }
 
     private func installExitHookIfNeeded() {

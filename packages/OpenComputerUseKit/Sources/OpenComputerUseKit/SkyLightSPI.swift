@@ -1,3 +1,4 @@
+import ApplicationServices
 import CoreGraphics
 import Darwin
 import Foundation
@@ -105,6 +106,10 @@ final class SkyLightSPI: @unchecked Sendable {
     private static let getProcessForPIDSymbol = "GetProcessForPID"
     private static let mainConnectionSymbol = "SLSMainConnectionID"
     private static let enableWindowOcclusionNotificationsSymbol = "SLSPackagesEnableWindowOcclusionNotifications"
+    // Read-only observation symbols used to replace fixed sleeps with polls.
+    private static let copySpacesForWindowsSymbol = "SLSCopySpacesForWindows"
+    private static let copyManagedDisplaySpacesSymbol = "SLSCopyManagedDisplaySpaces"
+    private static let axElementGetWindowSymbol = "_AXUIElementGetWindow"
     private static let applicationServicesPath = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
 
     private typealias PostToPidFunction = @convention(c) (pid_t, UnsafeMutableRawPointer?) -> Void
@@ -119,6 +124,9 @@ final class SkyLightSPI: @unchecked Sendable {
     // (cid, wid, enable, previousStateOut) — the out pointer is optional; the
     // ABI was read from the function prologue on macOS 27 (strb w21 / cbz x19).
     private typealias EnableWindowOcclusionNotificationsFunction = @convention(c) (UInt32, CGWindowID, UInt8, UnsafeMutablePointer<UInt8>?) -> Int32
+    private typealias CopySpacesForWindowsFunction = @convention(c) (UInt32, Int32, CFArray) -> Unmanaged<CFArray>?
+    private typealias CopyManagedDisplaySpacesFunction = @convention(c) (UInt32) -> Unmanaged<CFArray>?
+    private typealias AXElementGetWindowFunction = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
 
     private let frameworkHandle: UnsafeMutableRawPointer?
     private let applicationServicesHandle: UnsafeMutableRawPointer?
@@ -129,6 +137,9 @@ final class SkyLightSPI: @unchecked Sendable {
     private let getProcessForPIDFunction: GetProcessForPIDFunction?
     private let mainConnectionFunction: MainConnectionFunction?
     private let enableWindowOcclusionNotificationsFunction: EnableWindowOcclusionNotificationsFunction?
+    private let copySpacesForWindowsFunction: CopySpacesForWindowsFunction?
+    private let copyManagedDisplaySpacesFunction: CopyManagedDisplaySpacesFunction?
+    private let axElementGetWindowFunction: AXElementGetWindowFunction?
 
     let capability: SkyLightSPICapability
     /// Occlusion keep-alive (`WindowOcclusionKeepAlive`) is a separate optional
@@ -147,6 +158,9 @@ final class SkyLightSPI: @unchecked Sendable {
         getProcessForPIDFunction = Self.resolve(handle: appServicesHandle, symbol: Self.getProcessForPIDSymbol)
         mainConnectionFunction = Self.resolve(handle: handle, symbol: Self.mainConnectionSymbol)
         enableWindowOcclusionNotificationsFunction = Self.resolve(handle: handle, symbol: Self.enableWindowOcclusionNotificationsSymbol)
+        copySpacesForWindowsFunction = Self.resolve(handle: handle, symbol: Self.copySpacesForWindowsSymbol)
+        copyManagedDisplaySpacesFunction = Self.resolve(handle: handle, symbol: Self.copyManagedDisplaySpacesSymbol)
+        axElementGetWindowFunction = Self.resolve(handle: appServicesHandle, symbol: Self.axElementGetWindowSymbol)
 
         var missingSymbols: [String] = []
         if postToPidFunction == nil {
@@ -174,6 +188,38 @@ final class SkyLightSPI: @unchecked Sendable {
             missingOcclusionSymbols.append(Self.enableWindowOcclusionNotificationsSymbol)
         }
         occlusionCapability = SkyLightSPICapability(missingSymbols: missingOcclusionSymbols, feature: "occlusion")
+    }
+
+    // MARK: - Observation (read-only; nil when the symbol is absent)
+
+    /// Space ids the window currently belongs to.
+    func spaces(forWindow windowID: CGWindowID) -> [UInt64]? {
+        guard let mainConnectionFunction, let copySpacesForWindowsFunction else { return nil }
+        let result = copySpacesForWindowsFunction(mainConnectionFunction(), 0x7, [NSNumber(value: windowID)] as CFArray)?.takeRetainedValue()
+        return (result as? [NSNumber])?.map(\.uint64Value)
+    }
+
+    /// User (type 0) Space ids per display, keyed by display identifier.
+    func managedDisplaySpaces() -> [String: [UInt64]]? {
+        guard let mainConnectionFunction, let copyManagedDisplaySpacesFunction else { return nil }
+        guard let displays = copyManagedDisplaySpacesFunction(mainConnectionFunction())?.takeRetainedValue() as? [[String: Any]] else { return nil }
+        var result: [String: [UInt64]] = [:]
+        for display in displays {
+            let identifier = display["Display Identifier"] as? String ?? UUID().uuidString
+            result[identifier] = ((display["Spaces"] as? [[String: Any]]) ?? []).compactMap { space in
+                guard (space["type"] as? NSNumber)?.intValue == 0 else { return nil }
+                return (space["id64"] as? NSNumber)?.uint64Value
+            }
+        }
+        return result
+    }
+
+    /// CGWindowID behind an AX window element.
+    func windowID(for element: AXUIElement) -> CGWindowID? {
+        guard let axElementGetWindowFunction else { return nil }
+        var windowID: CGWindowID = 0
+        guard axElementGetWindowFunction(element, &windowID) == .success, windowID != 0 else { return nil }
+        return windowID
     }
 
     /// Enable or disable WindowServer occlusion notifications for one window of
