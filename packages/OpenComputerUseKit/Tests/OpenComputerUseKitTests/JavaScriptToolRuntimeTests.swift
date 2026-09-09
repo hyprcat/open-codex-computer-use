@@ -3,8 +3,19 @@ import XCTest
 @testable import OpenComputerUseKit
 
 final class JavaScriptToolRuntimeTests: XCTestCase {
-    private func runtime(_ caller: @escaping JavaScriptToolRuntime.ToolCaller = { _, _ in .text("ok") }) -> JavaScriptToolRuntime {
-        JavaScriptToolRuntime(toolCaller: caller)
+    private func runtime(
+        _ caller: @escaping JavaScriptToolRuntime.ToolCaller = { _, _ in .text("ok") },
+        elements: @escaping JavaScriptToolRuntime.ElementsProvider = { _ in [] }
+    ) -> JavaScriptToolRuntime {
+        JavaScriptToolRuntime(toolCaller: caller, elementsProvider: elements)
+    }
+
+    private func sampleElements() -> [[String: Any]] {
+        [
+            ["index": 0, "role": "AXButton", "title": "Send", "bounds": ["x": 1.0, "y": 2.0, "w": 3.0, "h": 4.0]],
+            ["index": 1, "role": "AXTextField", "title": "Message", "value": "hi"],
+            ["index": 2, "role": "AXButton", "title": "Cancel"],
+        ]
     }
 
     func testWriteProducesText() {
@@ -91,6 +102,42 @@ final class JavaScriptToolRuntimeTests: XCTestCase {
     func testTimeoutTerminatesRunawayScript() {
         let result = runtime().run(code: "while (true) {}", timeoutMs: 300)
         XCTAssertTrue(result.isError)
+    }
+
+    func testGetStateReturnsTextAndElements() {
+        let rt = runtime({ _, _ in .text("TREE") }, elements: { _ in self.sampleElements() })
+        let result = rt.run(
+            code: "const s = cua.getState(\"X\"); write(s.text + \"|\" + s.elements.length);",
+            timeoutMs: 5000
+        )
+        XCTAssertFalse(result.isError)
+        XCTAssertEqual(result.primaryText, "TREE|3")
+    }
+
+    func testFindMatchesByPredicate() {
+        let rt = runtime({ _, _ in .text("TREE") }, elements: { _ in self.sampleElements() })
+        let result = rt.run(
+            code: "const b = cua.find(\"X\", e => e.role === \"AXButton\" && /send/i.test(e.title || \"\")); write(String(b.index));",
+            timeoutMs: 5000
+        )
+        XCTAssertFalse(result.isError)
+        XCTAssertEqual(result.primaryText, "0")
+    }
+
+    func testFindAllFiltersElements() {
+        let rt = runtime({ _, _ in .text("TREE") }, elements: { _ in self.sampleElements() })
+        let result = rt.run(
+            code: "write(String(cua.findAll(\"X\", e => e.role === \"AXButton\").length));",
+            timeoutMs: 5000
+        )
+        XCTAssertEqual(result.primaryText, "2")
+    }
+
+    func testElementsErrorPropagates() {
+        let rt = runtime({ _, _ in .text("TREE") }, elements: { _ in throw ComputerUseError.appNotFound("Ghost") })
+        let result = rt.run(code: "cua.elements(\"Ghost\");", timeoutMs: 5000)
+        XCTAssertTrue(result.isError)
+        XCTAssertTrue(result.primaryText?.contains("Ghost") ?? false)
     }
 
     func testScreenshotRoundTripsImage() {

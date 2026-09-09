@@ -15,14 +15,20 @@ import OpenComputerUseJavaScriptShim
 /// Output is produced with `write(...)`; images with `emitImage(base64)`.
 final class JavaScriptToolRuntime {
     typealias ToolCaller = (String, [String: Any]) throws -> ToolCallResult
+    typealias ElementsProvider = (String) throws -> [[String: Any]]
 
     private let toolCaller: ToolCaller
+    private let elementsProvider: ElementsProvider
     private var context: JSContext
     private var output = ""
     private var images: [Data] = []
 
-    init(toolCaller: @escaping ToolCaller) {
+    init(
+        toolCaller: @escaping ToolCaller,
+        elementsProvider: @escaping ElementsProvider = { _ in [] }
+    ) {
         self.toolCaller = toolCaller
+        self.elementsProvider = elementsProvider
         self.context = JSContext()
         configure(context)
     }
@@ -93,6 +99,11 @@ final class JavaScriptToolRuntime {
         }
         ctx.setObject(imageBlock, forKeyedSubscript: "__ocuEmitImage" as NSString)
 
+        let elementsBlock: @convention(block) (String) -> String = { [unowned self] app in
+            self.nativeElements(app: app)
+        }
+        ctx.setObject(elementsBlock, forKeyedSubscript: "__ocuElements" as NSString)
+
         ctx.evaluateScript(Self.banner)
     }
 
@@ -136,6 +147,18 @@ final class JavaScriptToolRuntime {
         return Self.jsonString(payload)
     }
 
+    private func nativeElements(app: String) -> String {
+        let elements: [[String: Any]]
+        do {
+            elements = try elementsProvider(app)
+        } catch let error as ComputerUseError {
+            return Self.jsonString(["isError": true, "text": error.errorDescription ?? String(describing: error), "elements": [Any]()])
+        } catch {
+            return Self.jsonString(["isError": true, "text": String(describing: error), "elements": [Any]()])
+        }
+        return Self.jsonString(["isError": false, "text": "", "elements": elements])
+    }
+
     private static func errorJSON(_ message: String) -> String {
         jsonString(["isError": true, "text": message, "images": [String]()])
     }
@@ -165,7 +188,20 @@ final class JavaScriptToolRuntime {
       drag: function (app, fromX, fromY, toX, toY) { return this.call('drag', { app: app, from_x: fromX, from_y: fromY, to_x: toX, to_y: toY }).text; },
       setValue: function (app, element_index, value) { return this.call('set_value', { app: app, element_index: element_index, value: value }).text; },
       secondaryAction: function (app, element_index, action) { return this.call('perform_secondary_action', { app: app, element_index: element_index, action: action }).text; },
-      screenshot: function (app, opts) { var r = this.call('get_app_state', Object.assign({ app: app }, opts || {})); if (r.images && r.images.length) { __ocuEmitImage(r.images[0]); } return r.text; }
+      screenshot: function (app, opts) { var r = this.call('get_app_state', Object.assign({ app: app }, opts || {})); if (r.images && r.images.length) { __ocuEmitImage(r.images[0]); } return r.text; },
+      getState: function (app, opts) {
+        var text = this.call('get_app_state', Object.assign({ app: app }, opts || {})).text;
+        var res = JSON.parse(__ocuElements(app));
+        if (res.isError) { throw new Error(res.text || ('elements failed: ' + app)); }
+        return { text: text, elements: res.elements };
+      },
+      elements: function (app, opts) { return this.getState(app, opts).elements; },
+      find: function (app, predicate, opts) {
+        var els = this.elements(app, opts);
+        for (var i = 0; i < els.length; i++) { if (predicate(els[i])) { return els[i]; } }
+        return null;
+      },
+      findAll: function (app, predicate, opts) { return this.elements(app, opts).filter(predicate); }
     };
     globalThis.write = function (value) { __ocuWrite(typeof value === 'string' ? value : JSON.stringify(value, null, 2)); };
     globalThis.emitImage = function (base64) { return __ocuEmitImage(String(base64)); };

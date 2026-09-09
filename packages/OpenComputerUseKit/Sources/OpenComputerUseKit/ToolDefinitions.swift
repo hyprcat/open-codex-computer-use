@@ -29,7 +29,10 @@ public struct ToolDefinition: @unchecked Sendable {
 }
 
 public enum ToolDefinitions {
-    public static let all: [ToolDefinition] = [
+    /// The action definitions the `cua` API mirrors. These are NOT advertised
+    /// over MCP; they are reached from inside `js`. Kept for schema validation
+    /// and documentation.
+    public static let discrete: [ToolDefinition] = [
         ToolDefinition(
             name: "click",
             description: "Click an element by index or pixel coordinates from screenshot. This tool is part of plugin `Computer Use`.",
@@ -158,53 +161,68 @@ public enum ToolDefinitions {
                 required: ["app", "text"]
             )
         ),
-        ToolDefinition(
-            name: "js",
-            description: jsToolDescription,
-            annotations: defaultAnnotations(),
-            inputSchema: objectSchema(
-                properties: [
-                    "code": stringProperty(description: "JavaScript to run against the initialized `cua` runtime."),
-                    "timeout_ms": positiveIntegerProperty(description: "Execution timeout in milliseconds. Defaults to 30000."),
-                    "title": stringProperty(description: "Short user-facing description of what the code does."),
-                ],
-                required: ["code"]
-            )
-        ),
-        ToolDefinition(
-            name: "js_reset",
-            description: "Reset the `js` runtime, clearing all globalThis bindings and re-initializing the `cua` API. This tool is part of plugin `Computer Use`.",
-            annotations: defaultAnnotations(),
-            inputSchema: objectSchema(properties: [:], required: [])
-        ),
     ]
+
+    /// The only tool advertised over MCP. Every action is reachable from inside
+    /// `js` through the `cua` API (see docs/references/js-code-tool.md).
+    public static let all: [ToolDefinition] = [jsTool]
+
+    private static let jsTool = ToolDefinition(
+        name: "js",
+        description: jsToolDescription,
+        annotations: defaultAnnotations(),
+        inputSchema: objectSchema(
+            properties: [
+                "code": stringProperty(description: "JavaScript to run against the initialized `cua` runtime."),
+                "timeout_ms": positiveIntegerProperty(description: "Execution timeout in milliseconds. Defaults to 30000."),
+                "reset": [
+                    "type": "boolean",
+                    "description": "Clear all persisted globalThis bindings before running.",
+                ],
+                "title": stringProperty(description: "Short user-facing description of what the code does."),
+            ],
+            required: ["code"]
+        )
+    )
 }
 
 private let jsToolDescription = """
-Run JavaScript that drives Computer Use through a single tool, so a whole flow \
-(snapshot, find an element, act, verify, loop, retry) happens in one call instead \
-of one tool call per action. The runtime is synchronous: no promises, no await. \
-Print results with write(value); surface an image with emitImage(base64). Each call \
-runs in its own scope, so let/const never collide across calls; assign to globalThis \
-to persist a value to the next call (js_reset clears them). Default timeout 30000 ms.
+The one Computer Use tool. Run JavaScript that drives the desktop through the \
+`cua` API, so a whole flow (read state, find an element, act, verify, loop, retry) \
+happens in one call instead of one call per action. Get the current state every \
+turn before acting, exactly as with the underlying actions.
 
-The `cua` object mirrors the other tools and throws on a tool error:
-  cua.listApps()
-  cua.getAppState(app, opts?)            // returns the accessibility tree text
-  cua.click(app, {element_index?, x?, y?, click_method?})
-  cua.type(app, text, {key_method?})
-  cua.pressKey(app, key, {key_method?})
+Runtime: synchronous (no promises, no await) because actions run in-process. \
+Print results with write(value); objects are JSON-stringified. console.log works. \
+Surface an image with emitImage(base64). Return values are NOT auto-printed, so \
+use write. Each call runs in its own scope, so let/const never collide across \
+calls; assign to globalThis to keep a value for the next call. Pass reset:true to \
+clear all globalThis bindings first. Default timeout 30000 ms; raise timeout_ms \
+for longer flows.
+
+State and elements (prefer these; act by element index):
+  cua.getState(app, opts?)   -> { text, elements }   // tree text + structured elements
+  cua.elements(app, opts?)   -> [{ index, role, title, value, identifier, bounds, actions }]
+  cua.find(app, e => ...)    -> first matching element, or null
+  cua.findAll(app, e => ...) -> all matching elements
+  cua.getAppState(app, opts?)-> tree text only
+  cua.screenshot(app, opts?) -> tree text, and emits the screenshot image
+
+Actions (each throws on a tool error; catch with try/catch):
+  cua.click(app, { element_index?, x?, y?, click_method? })
+  cua.type(app, text, { key_method? })
+  cua.pressKey(app, key, { key_method? })
   cua.scroll(app, direction, element_index, pages?)
   cua.drag(app, from_x, from_y, to_x, to_y)
   cua.setValue(app, element_index, value)
   cua.secondaryAction(app, element_index, action)
-  cua.screenshot(app, opts?)            // returns tree text and emits the screenshot
-  cua.call(tool, args)                  // low-level: returns {text, images}
+  cua.listApps()
+  cua.call(tool, args)       // low-level escape hatch: returns { text, images }
 
 Example:
-  const tree = cua.getAppState("Notes");
-  write(tree);
-  cua.type("Notes", "Hello from one round trip");
+  const send = cua.find("Slack", e => e.role === "AXButton" && /send/i.test(e.title || ""));
+  if (send) { cua.click("Slack", { element_index: send.index }); }
+  else { write("no send button; state:\\n" + cua.getAppState("Slack")); }
 
 This tool is part of plugin `Computer Use`.
 """

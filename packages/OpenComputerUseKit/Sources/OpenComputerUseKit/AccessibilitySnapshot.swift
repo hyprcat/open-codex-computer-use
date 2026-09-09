@@ -10,6 +10,8 @@ final class ElementRecord {
     let element: AXUIElement?
     let localFrame: CGRect?
     let role: String?
+    let title: String?
+    let value: String?
     let rawActions: [String]
     let prettyActions: [String]
     let isSyntheticText: Bool
@@ -20,6 +22,8 @@ final class ElementRecord {
         element: AXUIElement?,
         localFrame: CGRect?,
         role: String? = nil,
+        title: String? = nil,
+        value: String? = nil,
         rawActions: [String],
         prettyActions: [String],
         isSyntheticText: Bool = false
@@ -29,6 +33,8 @@ final class ElementRecord {
         self.element = element
         self.localFrame = localFrame
         self.role = role
+        self.title = title
+        self.value = value
         self.rawActions = rawActions
         self.prettyActions = prettyActions
         self.isSyntheticText = isSyntheticText
@@ -451,6 +457,8 @@ enum SnapshotBuilder {
                 element: nil,
                 localFrame: element.frame.cgRect,
                 role: element.role,
+                title: element.title,
+                value: element.value,
                 rawActions: element.actions,
                 prettyActions: element.actions
             )
@@ -957,6 +965,8 @@ private struct TreeRenderer {
             element: root,
             localFrame: localFrame,
             role: role,
+            title: displayTitle,
+            value: value,
             rawActions: actions,
             prettyActions: prettyActions
         )
@@ -1008,6 +1018,7 @@ private struct TreeRenderer {
             identifier: nil,
             element: element,
             localFrame: resolveLocalFrame(of: element, windowBounds: context.windowBounds),
+            title: text,
             rawActions: [],
             prettyActions: [],
             isSyntheticText: true

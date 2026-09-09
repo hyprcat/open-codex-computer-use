@@ -76,6 +76,8 @@ args = ["mcp"]
 
 Read [references/usage.md](references/usage.md) for JSON config examples, direct tool-call patterns, and platform notes.
 
+On macOS the MCP server advertises a single `js` code tool; the discrete actions are reachable from inside it as `cua.*` and still callable by name through the CLI. See the `open-codex-computer-use-repl` skill. Linux and Windows advertise the discrete tools.
+
 ## References
 
 - [references/installation.md](references/installation.md): one-time CLI install, agent MCP install commands, and macOS permissions.

@@ -41,13 +41,15 @@ press_key
 set_value
 ```
 
-## Composing Actions with `js`
+## The `js` code tool (macOS)
 
-`js` runs JavaScript that drives the actions through a synchronous `cua` API, so a whole flow happens in one call. Use `write(value)` for output; assign to `globalThis` to persist across calls; `js_reset` clears them. macOS only. See `docs/references/js-code-tool.md`.
+On macOS the MCP server advertises exactly one tool, `js`. It runs JavaScript that drives the actions through a synchronous `cua` API, so a whole flow (read state, find an element, act, verify) happens in one call. The discrete actions stay callable by name through the CLI. Read `docs/references/js-code-tool.md` and the `open-codex-computer-use-repl` skill.
 
 ```bash
-open-computer-use call js --args '{"code":"const t = cua.getAppState(\"TextEdit\"); write(t); cua.type(\"TextEdit\", \"hi\");"}'
+open-computer-use call js --args '{"code":"const b = cua.find(\"TextEdit\", e => e.role===\"AXTextArea\"); if (b) cua.setValue(\"TextEdit\", b.index, \"hi\"); write(cua.getAppState(\"TextEdit\"));"}'
 ```
+
+Use `write(value)` for output; assign to `globalThis` to persist across calls; pass `reset: true` to clear them.
 
 ## Direct CLI Tool Calls
 

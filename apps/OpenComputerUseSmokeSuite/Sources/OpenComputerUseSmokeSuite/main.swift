@@ -196,8 +196,8 @@ enum OpenComputerUseSmokeSuite {
         try client.initialize()
 
         let tools = try client.listTools()
-        guard tools.count == 9 else {
-            throw SmokeError.message("Expected 9 tools, got \(tools.count)")
+        guard tools.count == 1, (tools.first?["name"] as? String) == "js" else {
+            throw SmokeError.message("Expected only the js tool, got \(tools.map { $0["name"] as? String ?? "?" })")
         }
 
         print("1. list_apps")

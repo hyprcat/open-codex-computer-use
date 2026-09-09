@@ -480,6 +480,32 @@ public final class ComputerUseService {
         return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly), style: .fullState)
     }
 
+    /// The current window's elements as structured records, for the `js` tool's
+    /// `cua.elements`/`cua.getState`. Reads the snapshot cached by the preceding
+    /// get_app_state so code can find and target elements without parsing text.
+    public func structuredElements(app query: String) throws -> [[String: Any]] {
+        let snapshot = try currentSnapshot(for: query)
+        return snapshot.elements.values
+            .sorted { $0.index < $1.index }
+            .map { record in
+                var dict: [String: Any] = ["index": record.index]
+                if let role = record.role, !role.isEmpty { dict["role"] = role }
+                if let title = record.title, !title.isEmpty { dict["title"] = title }
+                if let value = record.value, !value.isEmpty { dict["value"] = value }
+                if let identifier = record.identifier, !identifier.isEmpty { dict["identifier"] = identifier }
+                if let frame = record.localFrame {
+                    dict["bounds"] = [
+                        "x": frame.origin.x,
+                        "y": frame.origin.y,
+                        "w": frame.size.width,
+                        "h": frame.size.height,
+                    ]
+                }
+                if !record.prettyActions.isEmpty { dict["actions"] = record.prettyActions }
+                return dict
+            }
+    }
+
     public func click(
         app query: String,
         elementIndex: String?,

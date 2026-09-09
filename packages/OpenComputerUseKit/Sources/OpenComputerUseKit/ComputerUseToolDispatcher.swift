@@ -44,9 +44,14 @@ public final class ComputerUseToolDispatcher {
     }
 
     #if canImport(JavaScriptCore)
-    private lazy var jsRuntime = JavaScriptToolRuntime(toolCaller: { [unowned self] name, arguments in
-        try self.callTool(name: name, arguments: arguments)
-    })
+    private lazy var jsRuntime = JavaScriptToolRuntime(
+        toolCaller: { [unowned self] name, arguments in
+            try self.callTool(name: name, arguments: arguments)
+        },
+        elementsProvider: { [unowned self] app in
+            try self.service.structuredElements(app: app)
+        }
+    )
     #endif
 
     public func callTool(name: String, arguments: [String: Any]) throws -> ToolCallResult {
@@ -116,16 +121,12 @@ public final class ComputerUseToolDispatcher {
             #if canImport(JavaScriptCore)
             let code = try requireString("code", in: arguments)
             let timeoutMs = try optionalPositiveInt("timeout_ms", in: arguments) ?? 30000
+            if (arguments["reset"] as? Bool) == true {
+                jsRuntime.reset()
+            }
             return jsRuntime.run(code: code, timeoutMs: timeoutMs)
             #else
             throw ComputerUseError.unsupportedTool("js")
-            #endif
-        case "js_reset":
-            #if canImport(JavaScriptCore)
-            jsRuntime.reset()
-            return ToolCallResult.text("js runtime reset; top-level bindings cleared")
-            #else
-            throw ComputerUseError.unsupportedTool("js_reset")
             #endif
         default:
             throw ComputerUseError.unsupportedTool(name)

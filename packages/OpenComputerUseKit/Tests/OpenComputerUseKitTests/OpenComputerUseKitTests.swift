@@ -252,14 +252,17 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(size.height, 24)
     }
 
-    func testToolDefinitionCount() {
-        XCTAssertEqual(ToolDefinitions.all.count, 11)
+    func testOnlyJsToolIsAdvertised() {
+        XCTAssertEqual(ToolDefinitions.all.map(\.name), ["js"])
     }
 
-    func testJavaScriptToolsAreExposed() {
-        let names = Set(ToolDefinitions.all.map(\.name))
-        XCTAssertTrue(names.contains("js"))
-        XCTAssertTrue(names.contains("js_reset"))
+    func testDiscreteDefinitionsAreKeptButNotAdvertised() {
+        let discrete = Set(ToolDefinitions.discrete.map(\.name))
+        XCTAssertEqual(discrete.count, 9)
+        XCTAssertTrue(discrete.contains("get_app_state"))
+        XCTAssertTrue(discrete.contains("click"))
+        XCTAssertFalse(discrete.contains("js"))
+        XCTAssertFalse(ToolDefinitions.all.map(\.name).contains("get_app_state"))
     }
 
     func testReadToolArgumentsAcceptsJSONObject() throws {
@@ -647,7 +650,7 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testToolDescriptionsMatchOfficialComputerUseSurface() {
-        let tools = Dictionary(uniqueKeysWithValues: ToolDefinitions.all.map { ($0.name, $0) })
+        let tools = Dictionary(uniqueKeysWithValues: ToolDefinitions.discrete.map { ($0.name, $0) })
 
         XCTAssertEqual(
             tools["get_app_state"]?.description,
@@ -1770,7 +1773,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(huge, CGPoint(x: 1512, y: 0), "oversized windows are pinned to the display origin")
         XCTAssertTrue(display.contains(huge))
         for name in ["get_app_state"] {
-            let tool = ToolDefinitions.all.first { $0.name == name }
+            let tool = ToolDefinitions.discrete.first { $0.name == name }
             let properties = tool?.inputSchema["properties"] as? [String: Any]
             XCTAssertEqual((properties?["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "agent_display", "restore"])
         }
@@ -1791,7 +1794,7 @@ final class OpenComputerUseKitTests: XCTestCase {
 
     func testKeyboardToolSchemasExposeKeyMethod() {
         for name in ["type_text", "press_key"] {
-            let tool = ToolDefinitions.all.first { $0.name == name }
+            let tool = ToolDefinitions.discrete.first { $0.name == name }
             let properties = tool?.inputSchema["properties"] as? [String: Any]
             let keyMethod = properties?["key_method"] as? [String: Any]
             XCTAssertEqual(keyMethod?["enum"] as? [String], ["auto", "sky_key"], name)
