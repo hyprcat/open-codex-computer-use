@@ -144,37 +144,61 @@ final class AgentDisplay: @unchecked Sendable {
         return nil
     }
 
+    static func isRestored(frame: CGRect, to originalPosition: CGPoint, tolerance: CGFloat = 1) -> Bool {
+        abs(frame.minX - originalPosition.x) < tolerance
+            && abs(frame.minY - originalPosition.y) < tolerance
+    }
+
     /// Put a parked window back where it was.
     func restore(windowID: CGWindowID) throws {
         lock.lock()
         defer { lock.unlock() }
-        guard let entry = parked.removeValue(forKey: windowID) else {
+        guard let entry = parked[windowID] else {
             return
         }
         let start = TimingLog.now()
-        try setAXPosition(entry.element, entry.originalPosition)
+        do {
+            try setAXPosition(entry.element, entry.originalPosition)
+        } catch {
+            // A closed target no longer needs restoration. Forget it so the
+            // virtual display can still be removed. Keep live failures for a
+            // later retry instead of losing the original position.
+            if Self.windowFrame(windowID) == nil {
+                parked.removeValue(forKey: windowID)
+                destroyDisplayIfIdle()
+                return
+            }
+            throw error
+        }
         let back = waitUntil(timeout: Self.moveSettle) {
             guard let frame = Self.windowFrame(windowID) else { return false }
-            return abs(frame.minX - entry.originalPosition.x) < 1 && abs(frame.minY - entry.originalPosition.y) < 1
+            return Self.isRestored(frame: frame, to: entry.originalPosition)
         }
         if back == nil {
             Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
+            guard let frame = Self.windowFrame(windowID) else {
+                parked.removeValue(forKey: windowID)
+                destroyDisplayIfIdle()
+                return
+            }
+            guard Self.isRestored(frame: frame, to: entry.originalPosition) else {
+                throw ComputerUseError.stateUnavailable(
+                    "window_placement 'restore' could not confirm that the window returned to its original position"
+                )
+            }
         }
+        parked.removeValue(forKey: windowID)
         TimingLog.log("agent_display.restore", since: start)
         destroyDisplayIfIdle()
     }
 
     func restoreAll() {
         lock.lock()
-        defer { lock.unlock() }
-        for entry in parked.values {
-            try? setAXPosition(entry.element, entry.originalPosition)
+        let windowIDs = Array(parked.keys)
+        lock.unlock()
+        for windowID in windowIDs {
+            try? restore(windowID: windowID)
         }
-        if !parked.isEmpty {
-            Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
-        }
-        parked.removeAll()
-        destroyDisplayIfIdle()
     }
 
     // MARK: - Display lifecycle (call with lock held)

@@ -50,19 +50,25 @@ func appHasLazyWebAccessibility(bundleURL: URL?) -> Bool {
 /// visible pins the app's notion at "visible", so covering the window later or
 /// moving it to another Space no longer hides its content. This is a
 /// WindowServer-level, app-agnostic switch, applied to every window the agent
-/// drives; it is re-enabled when the process exits. Nothing here activates,
-/// raises, or moves a window, and it cannot un-hide a window that is already
-/// occluded when the agent first sees it.
+/// drives; its prior state is restored when the server shuts down normally.
+/// Nothing here activates, raises, or moves a window, and it cannot un-hide a
+/// window that is already occluded when the agent first sees it.
 final class WindowOcclusionKeepAlive: @unchecked Sendable {
     static let shared = WindowOcclusionKeepAlive()
 
     private let lock = NSLock()
-    private var frozenWindowIDs: Set<CGWindowID> = []
+    /// Preserve the state reported by the SPI so cleanup does not enable
+    /// notifications that another owner had already disabled.
+    private var frozenWindowPreviousStates: [CGWindowID: Bool] = [:]
     private var exitHookInstalled = false
 
     /// Returns `true` when the window's visible state is pinned (now or already).
     @discardableResult
-    func keepVisible(windowID: CGWindowID, bounds: CGRect, spi: SkyLightSPI = .shared) -> Bool {
+    func keepVisible(
+        windowID: CGWindowID,
+        bounds: CGRect,
+        spi: any WindowOcclusionControlling = SkyLightSPI.shared
+    ) -> Bool {
         guard spi.occlusionCapability.isAvailable else {
             return false
         }
@@ -72,18 +78,18 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
             lock.unlock()
         }
 
-        if frozenWindowIDs.contains(windowID) {
+        if frozenWindowPreviousStates[windowID] != nil {
             return true
         }
         guard windowLooksUnoccluded(bounds: bounds, coveringBounds: coveringWindowBounds(above: windowID)) else {
             return false
         }
         do {
-            try spi.setWindowOcclusionNotificationsEnabled(false, windowID: windowID)
+            let previousState = try spi.setWindowOcclusionNotificationsEnabled(false, windowID: windowID)
+            frozenWindowPreviousStates[windowID] = previousState
         } catch {
             return false
         }
-        frozenWindowIDs.insert(windowID)
         installExitHookIfNeeded()
         return true
     }
@@ -93,16 +99,19 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
         defer {
             lock.unlock()
         }
-        return frozenWindowIDs.contains(windowID)
+        return frozenWindowPreviousStates[windowID] != nil
     }
 
-    func releaseAll(spi: SkyLightSPI = .shared) {
+    func releaseAll(spi: any WindowOcclusionControlling = SkyLightSPI.shared) {
         lock.lock()
-        let windowIDs = frozenWindowIDs
-        frozenWindowIDs.removeAll()
-        lock.unlock()
-        for windowID in windowIDs {
-            try? spi.setWindowOcclusionNotificationsEnabled(true, windowID: windowID)
+        defer { lock.unlock() }
+        for (windowID, previousState) in Array(frozenWindowPreviousStates) {
+            do {
+                try spi.setWindowOcclusionNotificationsEnabled(previousState, windowID: windowID)
+                frozenWindowPreviousStates.removeValue(forKey: windowID)
+            } catch {
+                // Retain failed entries so a later cleanup can retry.
+            }
         }
     }
 
@@ -116,4 +125,11 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
         }
     }
 
+}
+
+/// Release process-owned background window state at the host's session
+/// boundary. The exit hooks remain a final best-effort fallback.
+public func resetOpenComputerUseBackgroundWindowState() {
+    WindowOcclusionKeepAlive.shared.releaseAll()
+    AgentDisplay.shared.restoreAll()
 }

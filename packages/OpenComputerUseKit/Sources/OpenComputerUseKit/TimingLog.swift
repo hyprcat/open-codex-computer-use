@@ -31,8 +31,15 @@ enum TimingLog {
 /// defaults to the value verified by the benchmark on macOS 27 and can be
 /// overridden per environment (milliseconds) when a target needs more slack.
 enum InputTiming {
-    static func milliseconds(_ variable: String, default fallback: Double) -> TimeInterval {
-        guard let raw = ProcessInfo.processInfo.environment[variable], let ms = Double(raw) else { return fallback / 1000 }
+    static let typeChunkDelayDefaultMilliseconds = 20.0
+    static let pressKeySettleDefaultMilliseconds = 100.0
+
+    static func milliseconds(
+        _ variable: String,
+        default fallback: Double,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> TimeInterval {
+        guard let raw = environment[variable], let ms = Double(raw) else { return fallback / 1000 }
         return max(0, ms) / 1000
     }
 
@@ -48,10 +55,18 @@ enum InputTiming {
         guard let raw = ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_SKY_CLICK_DELAY_SCALE"], let scale = Double(raw) else { return 0.2 }
         return max(0, scale)
     }()
-    /// Gap between Unicode chunks in type_text. Was 20 ms; chunks are ordered on one queue.
-    static let typeChunkDelay = milliseconds("OPEN_COMPUTER_USE_TYPE_CHUNK_DELAY_MS", default: 0)
-    /// Gap after a press_key chord. Was 100 ms; the events are ordered on one queue.
-    static let pressKeySettle = milliseconds("OPEN_COMPUTER_USE_PRESS_KEY_SETTLE_MS", default: 0)
+    /// Gap between Unicode chunks in type_text. Keep the established default for
+    /// app/toolkit compatibility; callers can explicitly tune it after testing.
+    static let typeChunkDelay = milliseconds(
+        "OPEN_COMPUTER_USE_TYPE_CHUNK_DELAY_MS",
+        default: typeChunkDelayDefaultMilliseconds
+    )
+    /// Gap after a press_key chord. Keep the established default because the
+    /// target may process its event queue asynchronously.
+    static let pressKeySettle = milliseconds(
+        "OPEN_COMPUTER_USE_PRESS_KEY_SETTLE_MS",
+        default: pressKeySettleDefaultMilliseconds
+    )
 }
 
 /// Poll `condition` every `interval` until it holds or `timeout` elapses.

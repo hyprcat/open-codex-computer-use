@@ -88,6 +88,13 @@ struct SkyLightSPICapability: Equatable, Sendable {
     }
 }
 
+protocol WindowOcclusionControlling: AnyObject {
+    var occlusionCapability: SkyLightSPICapability { get }
+
+    @discardableResult
+    func setWindowOcclusionNotificationsEnabled(_ enabled: Bool, windowID: CGWindowID) throws -> Bool
+}
+
 /// Runtime-only bridge for the private SkyLight functions used by `sky_click`
 /// and `sky_key`.
 ///
@@ -95,7 +102,7 @@ struct SkyLightSPICapability: Equatable, Sendable {
 /// from the MIT-licensed Cua Driver and yabai implementations. Keep all
 /// undocumented ABI in this file so a future macOS compatibility change has
 /// one review boundary.
-final class SkyLightSPI: @unchecked Sendable {
+final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
     static let shared = SkyLightSPI()
 
     private static let frameworkPath = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"

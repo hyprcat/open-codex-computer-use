@@ -1833,6 +1833,65 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testBackgroundInputTimingDefaultsKeepCompatibilityMargins() {
+        XCTAssertEqual(InputTiming.typeChunkDelayDefaultMilliseconds, 20)
+        XCTAssertEqual(InputTiming.pressKeySettleDefaultMilliseconds, 100)
+        XCTAssertEqual(SkyKeyboardDispatcher.keyWindowFallbackSettleDefaultMilliseconds, 10)
+        XCTAssertEqual(SkyKeyboardDispatcher.releaseSettleDefaultMilliseconds, 10)
+        XCTAssertEqual(
+            InputTiming.milliseconds("OCU_TEST_TIMING", default: 20, environment: [:]),
+            0.020,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            InputTiming.milliseconds("OCU_TEST_TIMING", default: 20, environment: ["OCU_TEST_TIMING": "7.5"]),
+            0.0075,
+            accuracy: 0.000_001
+        )
+    }
+
+    func testAgentDisplayRestoreGeometryUsesATolerance() {
+        let original = CGPoint(x: 200, y: 300)
+        XCTAssertTrue(AgentDisplay.isRestored(frame: CGRect(x: 200.5, y: 299.5, width: 600, height: 420), to: original))
+        XCTAssertFalse(AgentDisplay.isRestored(frame: CGRect(x: 202, y: 300, width: 600, height: 420), to: original))
+    }
+
+    func testOcclusionKeepAliveRestoresPriorStateAndCanRetryFailures() {
+        final class FakeOcclusionSPI: WindowOcclusionControlling {
+            let occlusionCapability = SkyLightSPICapability(missingSymbols: [], feature: "occlusion")
+            var states: [CGWindowID: Bool] = [101: true, 102: false]
+            var failedRestores: Set<CGWindowID> = [101]
+            var calls: [CGWindowID: Int] = [:]
+
+            func setWindowOcclusionNotificationsEnabled(_ enabled: Bool, windowID: CGWindowID) throws -> Bool {
+                calls[windowID, default: 0] += 1
+                let previous = states[windowID] ?? true
+                if calls[windowID, default: 0] > 1, failedRestores.remove(windowID) != nil {
+                    throw ComputerUseError.message("injected restore failure")
+                }
+                states[windowID] = enabled
+                return previous
+            }
+        }
+
+        let keepAlive = WindowOcclusionKeepAlive()
+        let spi = FakeOcclusionSPI()
+        let visibleBounds = CGRect(x: 10, y: 10, width: 100, height: 100)
+        XCTAssertTrue(keepAlive.keepVisible(windowID: 101, bounds: visibleBounds, spi: spi))
+        XCTAssertTrue(keepAlive.keepVisible(windowID: 102, bounds: visibleBounds, spi: spi))
+        XCTAssertEqual(spi.states[101], false)
+        XCTAssertEqual(spi.states[102], false)
+
+        keepAlive.releaseAll(spi: spi)
+        XCTAssertTrue(keepAlive.isPinned(windowID: 101), "failed restores must remain retryable")
+        XCTAssertFalse(keepAlive.isPinned(windowID: 102))
+        XCTAssertEqual(spi.states[102], false, "restore the original disabled state, not always true")
+
+        keepAlive.releaseAll(spi: spi)
+        XCTAssertFalse(keepAlive.isPinned(windowID: 101))
+        XCTAssertEqual(spi.states[101], true)
+    }
+
     func testKeyMethodParsingAndPolicy() throws {
         XCTAssertEqual(try parseKeyMethod(nil), .auto)
         XCTAssertEqual(try parseKeyMethod(" SKY_KEY "), .skyKey)

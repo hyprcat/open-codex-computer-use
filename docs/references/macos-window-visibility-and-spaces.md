@@ -58,10 +58,10 @@ agent 第一次接触时就已经被遮挡或已在其他 Space 的 Chromium 窗
 
 固定间隔的取舍来自 `BackgroundInputBenchmarkLiveTests` 的扫描，而不是沿用继承来的数字：
 
-- 同一条事件队列里的东西不需要间隔：type_text 的 chunk 间隔（原 20 ms）、press_key 收尾（原 100 ms）、`sky_key` 等 Chrome 变 key 的 settle（原 300 ms）和 release（原 100 ms）都降为 0，50/50 成功。原因是 key-window record、按键事件、deactivate record 在目标 app 内按序处理。
+- macOS 27 上同一事件队列曾在 0 ms 下达到 50/50；macOS 26.6.2 复验时，`sky_key` 先后只有 18/20、49/50 成功，settle / release 各 10 ms 后恢复为 50/50。因此 `sky_key` 默认保留 10 ms 跨版本余量；普通 `auto` 输入不参与这项优化，继续保持 type_text chunk 20 ms、press_key 收尾 100 ms 的既有默认。
 - 跨通道的地方仍要间隔：activation / key-window record 走 `SLPSPostEventRecordTo`，鼠标键盘事件走 `CGEventPostToPid`，两条通道没有顺序保证。focus record 后的间隔 0 ms 实测也通过，默认取 10 ms（原 40 ms）留余量。
 - `sky_click` recipe 内部的间隔不能为 0：scale 0 时 30 轮点击全部失败并把后续按键也带坏，scale 0.05 起全部成功，默认取 0.2（primer 后 20 ms、renderer settle 20 ms）。
-- 所有间隔都是环境变量可调的校准旋钮（`OPEN_COMPUTER_USE_FOCUS_RECORD_SETTLE_MS`、`OPEN_COMPUTER_USE_SKY_CLICK_DELAY_SCALE`、`OPEN_COMPUTER_USE_TYPE_CHUNK_DELAY_MS`、`OPEN_COMPUTER_USE_PRESS_KEY_SETTLE_MS`、`OPEN_COMPUTER_USE_SKY_KEY_SETTLE_MS`、`OPEN_COMPUTER_USE_SKY_KEY_RELEASE_MS`）。
+- 所有间隔都是环境变量可调的校准旋钮（`OPEN_COMPUTER_USE_FOCUS_RECORD_SETTLE_MS`、`OPEN_COMPUTER_USE_SKY_CLICK_DELAY_SCALE`、`OPEN_COMPUTER_USE_TYPE_CHUNK_DELAY_MS`、`OPEN_COMPUTER_USE_PRESS_KEY_SETTLE_MS`、`OPEN_COMPUTER_USE_SKY_KEY_SETTLE_MS`、`OPEN_COMPUTER_USE_SKY_KEY_RELEASE_MS`）。当前默认依次为 10 ms、0.2、20 ms、100 ms、10 ms、10 ms。
 
 agent display：创建显示器约 330–350 ms，WindowServer 登记 Space 后就绪约 400–570 ms，停靠窗口约 140–230 ms，恢复约 260 ms（都是轮询到条件满足即返回）。
 

@@ -9,8 +9,8 @@ the end. Nothing here is estimated.
 
 | Item | Value |
 | --- | --- |
-| Machine | Apple M5, 16 GB |
-| macOS | 27.0 (26A5425a), single built-in display 3024x1964 Retina |
+| Machine | Apple M5, 16 GB；另在 Apple Silicon macOS 26.6.2 复验跨版本默认值 |
+| macOS | 27.0 (26A5425a), single built-in display 3024x1964 Retina；26.6.2 (25G83) compatibility run |
 | Chrome | Google Chrome 152.0.7977.82, isolated `--user-data-dir`, `--app=` window 600x420 |
 | Date | 2026-09-08 / 2026-09-09 |
 | Foreground during tests | `OpenComputerUseFixture` window fully covering the target, its text field first responder |
@@ -64,10 +64,11 @@ chunk gap and press_key tail were 0 in every row except the last.
 
 Readings:
 
-- Events on the target's single event queue need no gap. `type_text` chunks, the `press_key`
-  tail, `sky_key`'s "wait for the window to become key" and its release all went to 0 with no
-  failures: the key-window records, the key events and the deactivation record are handled in
-  order by the app.
+- macOS 27 accepted zero-delay events in this sweep, but this does not establish a portable
+  default. On macOS 26.6.2 the same pinned benchmark produced 18/20 and then 49/50 successful
+  `sky_key` cycles with zero settle/release; setting both to 10 ms produced 50/50. Ordinary
+  `auto` input was not covered by this background-only benchmark, so its established 20 ms
+  type chunk gap and 100 ms press-key tail remain unchanged.
 - The gap after a focus record is cross-channel: focus records travel `SLPSPostEventRecordTo`,
   mouse and key events travel `CGEventPostToPid`. 0 ms passed in every row that had non-zero
   click gaps, but the default is 10 ms (was 40) to keep margin.
@@ -75,8 +76,8 @@ Readings:
   cycle mostly failed too; scale 0.05 passed everything. Default is 0.2 (2x the passing minimum),
   which is 20 ms after the primer and 20 ms renderer settle instead of 100 ms each.
 
-Current defaults: `FOCUS=10`, `SCALE=0.2`, `TYPE_CHUNK=0`, `PRESS_KEY=0`, `SKY_KEY_SETTLE=0`,
-`SKY_KEY_RELEASE=0`. All six are environment variables; see `docs/RELIABILITY.md`.
+Current defaults: `FOCUS=10`, `SCALE=0.2`, `TYPE_CHUNK=20`, `PRESS_KEY=100`, `SKY_KEY_SETTLE=10`,
+`SKY_KEY_RELEASE=10`. All six are environment variables; see `docs/RELIABILITY.md`.
 
 ## 3. Pinned versus unpinned window
 
@@ -91,6 +92,9 @@ so Chromium still considered the covered page visible.
 | unpinned | 20 ms | 15/15 | 246.9 ms* | 288.7 ms |
 | unpinned | 100 ms | 15/15 | 325.9 ms* | 367.3 ms |
 | unpinned | 300 ms | 15/15 | 526.5 ms* | 569.7 ms |
+
+Compatibility follow-up on macOS 26.6.2, pinned isolated Chrome, 50 cycles: zero settle/release
+gave 49/50 keys, while 10 ms settle/release gave 50/50 keys (clicks were 50/50 in both runs).
 
 \* these rows still carried the old 40 ms focus gaps, 20 ms chunk gap and 100 ms release. The
 point of the table is that the key settle does not affect success in either state.

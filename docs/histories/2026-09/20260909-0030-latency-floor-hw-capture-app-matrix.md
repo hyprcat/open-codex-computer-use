@@ -13,6 +13,7 @@
 
 **Key Actions:**
 - **InputTiming knobs**: 所有固定间隔改为环境变量可调，默认值由 `BackgroundInputBenchmarkLiveTests` 扫描决定：focus record 40→10 ms，`sky_click` recipe scale 1→0.2，type_text chunk 20→0 ms，press_key 收尾 100→0 ms，`sky_key` key-window settle 300→0 ms、release 100→0 ms。结果：`sky_click` 调用返回 323→82 ms，`sky_key` 526→30 ms，50/50 成功、每轮恰好一次点击。
+- **Compatibility correction (2026-09-09)**: macOS 26.6.2 的独立复验显示 `sky_key` 零 settle/release 会偶发丢键（18/20、49/50），各恢复 10 ms 后为 50/50；普通 `auto` 输入不在该后台基准覆盖范围内，因此 type_text chunk / press-key settle 恢复既有 20 / 100 ms 默认，仍可用环境变量显式调优。
 - **系统事实**: 同一事件队列内不需要间隔；`SLPSPostEventRecordTo` 与 `CGEventPostToPid` 是两条通道，跨通道保留小间隔；`sky_click` 内部 down/up 间隔不能为 0（scale 0 全部失败）。
 - **HW capture**: 截图主路径改为 `SLSHWCaptureWindowList`（15–45 ms，非活动全屏 Space 的窗口也能截），ScreenCaptureKit 为 fallback（它对这类窗口返回 -3811）。
 - **AX↔CGWindow 绑定**: `_AXUIElementGetWindow` 直接把 AX root window 绑到 `CGWindowID`，消除 tree 与截图/坐标指向不同窗口的一类错误。

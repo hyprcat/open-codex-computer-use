@@ -89,19 +89,19 @@ func skyKeyWindowMatchesTarget(
 /// pointer never moves.
 enum SkyKeyboardDispatcher {
     private static let dispatchLock = NSLock()
-    /// The activation record, the key-window records, the key events and the
-    /// deactivation record all travel the target's single event queue, so the
-    /// app handles them in order: no timing gap is needed between them. Both
-    /// settles therefore default to 0 and exist only as calibration knobs
-    /// (OPEN_COMPUTER_USE_SKY_KEY_SETTLE_MS / OPEN_COMPUTER_USE_SKY_KEY_RELEASE_MS)
-    /// for a target that turns out to process input asynchronously.
-    static let keyWindowFallbackSettle: TimeInterval = settle("OPEN_COMPUTER_USE_SKY_KEY_SETTLE_MS")
-    static let releaseSettle: TimeInterval = settle("OPEN_COMPUTER_USE_SKY_KEY_RELEASE_MS")
-
-    private static func settle(_ variable: String) -> TimeInterval {
-        guard let raw = ProcessInfo.processInfo.environment[variable], let ms = Double(raw) else { return 0 }
-        return max(0, ms) / 1000
-    }
+    static let keyWindowFallbackSettleDefaultMilliseconds = 10.0
+    static let releaseSettleDefaultMilliseconds = 10.0
+    /// The records and key events are ordered, but target applications can
+    /// process them asynchronously. macOS 26 live testing dropped occasional
+    /// keys with zero delay, so retain a small cross-version safety margin.
+    static let keyWindowFallbackSettle = InputTiming.milliseconds(
+        "OPEN_COMPUTER_USE_SKY_KEY_SETTLE_MS",
+        default: keyWindowFallbackSettleDefaultMilliseconds
+    )
+    static let releaseSettle = InputTiming.milliseconds(
+        "OPEN_COMPUTER_USE_SKY_KEY_RELEASE_MS",
+        default: releaseSettleDefaultMilliseconds
+    )
 
     static func typeText(
         target: SkyKeyboardTarget,
