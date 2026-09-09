@@ -43,9 +43,20 @@ let package = Package(
             ]
         ),
         .target(
+            name: "OpenComputerUseJavaScriptShim",
+            path: "packages/OpenComputerUseJavaScriptShim",
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedFramework("JavaScriptCore"),
+            ]
+        ),
+        .target(
             name: "OpenComputerUseKit",
-            dependencies: ["OpenComputerUseVirtualDisplayShim"],
-            path: "packages/OpenComputerUseKit/Sources/OpenComputerUseKit"
+            dependencies: ["OpenComputerUseVirtualDisplayShim", "OpenComputerUseJavaScriptShim"],
+            path: "packages/OpenComputerUseKit/Sources/OpenComputerUseKit",
+            linkerSettings: [
+                .linkedFramework("JavaScriptCore"),
+            ]
         ),
         .executableTarget(
             name: "OpenComputerUse",
