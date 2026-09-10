@@ -96,3 +96,7 @@ cua.secondaryAction(app, element_index, action)
 cua.listApps()
 cua.call(tool, args)        -> { text, images }   // low-level escape hatch
 ```
+
+## Feeder integration (agent builders)
+
+To drive this runtime with speculative, per-line execution as the model streams the code, an agent runtime speaks the JSONL feeder protocol over `open-computer-use stream`. See [../../docs/references/js-stream-protocol.md](../../docs/references/js-stream-protocol.md). Standard MCP cannot stream partial tool arguments, so this path is for runtimes that own the model loop.

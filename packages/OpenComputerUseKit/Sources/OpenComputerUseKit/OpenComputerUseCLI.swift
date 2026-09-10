@@ -3,6 +3,7 @@ import Foundation
 public enum OpenComputerUseCLICommand: Equatable {
     case launchOnboarding
     case mcp
+    case stream
     case doctor
     case listApps
     case snapshot(app: String, textLimit: SnapshotTextLimit = .defaults, treeLimits: AccessibilityTreeLimits = .defaults)
@@ -34,7 +35,7 @@ public func shouldUseMacOSAppAgentProxy(
         return !runningFromLaunchServicesAppInstance
     case .mcp, .doctor, .listApps, .snapshot, .call:
         return true
-    case .turnEnded, .help, .version:
+    case .stream, .turnEnded, .help, .version:
         return false
     }
 }
@@ -76,6 +77,8 @@ public func parseOpenComputerUseCLI(arguments: [String]) throws -> OpenComputerU
         return .version
     case "mcp":
         return try parseSimpleCommand(name: "mcp", arguments: Array(arguments.dropFirst()), result: .mcp)
+    case "stream":
+        return try parseSimpleCommand(name: "stream", arguments: Array(arguments.dropFirst()), result: .stream)
     case "doctor":
         return try parseSimpleCommand(name: "doctor", arguments: Array(arguments.dropFirst()), result: .doctor)
     case "list-apps":
@@ -107,6 +110,7 @@ public func openComputerUseHelpText(command: String? = nil) -> String {
 
         Commands:
           mcp                  Start the stdio MCP server.
+          stream               Start the stdio streaming (speculative js) server for agent feeders.
           doctor               Print permission status and launch onboarding if needed.
           list-apps            Print running or recently used apps.
           snapshot <app>       Print the current accessibility snapshot for an app.

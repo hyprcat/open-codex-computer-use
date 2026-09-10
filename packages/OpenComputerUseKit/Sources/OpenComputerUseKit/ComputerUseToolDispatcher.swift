@@ -147,6 +147,52 @@ public final class ComputerUseToolDispatcher {
         }
     }
 
+    // MARK: streaming / speculative execution (feeder protocol backend)
+
+    public struct StreamProgress {
+        public let completed: Int
+        public let failed: Bool
+        public let error: String?
+    }
+
+    public func streamBegin(id: String) {
+        #if canImport(JavaScriptCore)
+        jsRuntime.beginStream(id: id)
+        #endif
+    }
+
+    @discardableResult
+    public func streamFeed(id: String, source: String) -> StreamProgress {
+        #if canImport(JavaScriptCore)
+        let progress = jsRuntime.feedStream(id: id, source: source)
+        return StreamProgress(completed: progress.completed, failed: progress.failed, error: progress.error)
+        #else
+        return StreamProgress(completed: 0, failed: true, error: "js streaming is unavailable on this platform")
+        #endif
+    }
+
+    public func streamFinish(id: String, source: String?) -> ToolCallResult {
+        #if canImport(JavaScriptCore)
+        return jsRuntime.finishStream(id: id, source: source)
+        #else
+        return ToolCallResult.text("js streaming is unavailable on this platform", isError: true)
+        #endif
+    }
+
+    public func streamAbandon(id: String) -> ToolCallResult {
+        #if canImport(JavaScriptCore)
+        return jsRuntime.abandonStream(id: id)
+        #else
+        return ToolCallResult.text("js streaming is unavailable on this platform", isError: true)
+        #endif
+    }
+
+    public func streamReset() {
+        #if canImport(JavaScriptCore)
+        jsRuntime.reset()
+        #endif
+    }
+
     private func requireString(_ key: String, in arguments: [String: Any]) throws -> String {
         guard let value = arguments[key] as? String, !value.isEmpty else {
             throw ComputerUseError.missingArgument(key)

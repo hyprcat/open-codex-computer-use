@@ -69,6 +69,8 @@ definitions describe (`ToolDefinitions.discrete`).
 
 ## Streaming / speculative execution (engine)
 
+The feeder wire protocol is specified in [js-stream-protocol.md](js-stream-protocol.md) and served by `open-computer-use stream`.
+
 The runtime can execute a call's statements **as the model streams the `code`**,
 before the call finishes generating, so model-generation latency overlaps
 execution latency. This is modelled on `pi_agent_rust`'s `python_tool`

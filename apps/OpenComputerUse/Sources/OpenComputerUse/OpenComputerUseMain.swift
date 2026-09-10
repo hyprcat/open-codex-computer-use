@@ -48,6 +48,11 @@ enum OpenComputerUseMain {
             } else {
                 try server.run()
             }
+        case .stream:
+            if VisualCursorSupport.isEnabled {
+                _ = NSApplication.shared.setActivationPolicy(.accessory)
+            }
+            OpenComputerUseStreamServer().run()
         case .doctor:
             let permissions = PermissionDiagnostics.current()
             print(permissions.summary)

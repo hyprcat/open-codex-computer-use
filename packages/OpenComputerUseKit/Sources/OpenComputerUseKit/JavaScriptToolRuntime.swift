@@ -104,17 +104,29 @@ final class JavaScriptToolRuntime {
         streamCells[id] = StreamCell()
     }
 
+    struct StreamProgress {
+        let completed: Int
+        let failed: Bool
+        let error: String?
+    }
+
     /// Feed the growing `code` prefix; executes every statement that has newly
-    /// completed since the last feed. The prefix must only grow.
-    func feedStream(id: String, source: String) {
-        guard let cell = streamCells[id], !cell.finished, !cell.failed else { return }
+    /// completed since the last feed. The prefix must only grow. Returns how many
+    /// statements have run and whether the cell has failed.
+    @discardableResult
+    func feedStream(id: String, source: String) -> StreamProgress {
+        guard let cell = streamCells[id], !cell.finished, !cell.failed else {
+            let cell = streamCells[id]
+            return StreamProgress(completed: cell?.completed ?? 0, failed: cell?.failed ?? true, error: cell?.error)
+        }
         guard source.hasPrefix(cell.source) else {
             cell.failed = true
             cell.error = "source diverged; earlier statements may have run"
-            return
+            return StreamProgress(completed: cell.completed, failed: true, error: cell.error)
         }
         cell.source = source
         executeNewlyComplete(cell, isFinal: false)
+        return StreamProgress(completed: cell.completed, failed: cell.failed, error: cell.error)
     }
 
     /// The full source has arrived: run the trailing statement (if any) and return
