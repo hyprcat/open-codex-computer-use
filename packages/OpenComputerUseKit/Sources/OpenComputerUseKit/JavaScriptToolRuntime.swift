@@ -22,6 +22,23 @@ final class JavaScriptToolRuntime {
     private var context: JSContext
     private var output = ""
     private var images: [Data] = []
+    private var streamCells: [String: StreamCell] = [:]
+
+    /// One streamed call's record. `source` grows by prefix as the model's tool
+    /// call streams; statements are executed the moment they complete, before the
+    /// call finishes generating (speculative / streaming tool calling, modelled on
+    /// pi_agent_rust's python_tool). Statements share one persistent scope like a
+    /// REPL. Full speculation: mutating actions run as they stream, so a diverged
+    /// or abandoned stream can leave real effects already applied — the divergence
+    /// guard and `abandon` surface that, they cannot undo it.
+    private final class StreamCell {
+        var source = ""
+        var executed = 0
+        var completed = 0
+        var finished = false
+        var failed = false
+        var error: String?
+    }
 
     init(
         toolCaller: @escaping ToolCaller,
@@ -75,6 +92,167 @@ final class JavaScriptToolRuntime {
         content.append(contentsOf: images.map { .pngImage($0) })
         if content.isEmpty { content.append(.text("(no output)")) }
         return ToolCallResult(content: content, isError: false)
+    }
+
+    // MARK: streaming / speculative execution
+
+    /// Start a streamed cell; resets the current output sink. Cells share the one
+    /// persistent scope, so run them one at a time in call order.
+    func beginStream(id: String) {
+        output = ""
+        images = []
+        streamCells[id] = StreamCell()
+    }
+
+    /// Feed the growing `code` prefix; executes every statement that has newly
+    /// completed since the last feed. The prefix must only grow.
+    func feedStream(id: String, source: String) {
+        guard let cell = streamCells[id], !cell.finished, !cell.failed else { return }
+        guard source.hasPrefix(cell.source) else {
+            cell.failed = true
+            cell.error = "source diverged; earlier statements may have run"
+            return
+        }
+        cell.source = source
+        executeNewlyComplete(cell, isFinal: false)
+    }
+
+    /// The full source has arrived: run the trailing statement (if any) and return
+    /// the cell's accumulated result.
+    func finishStream(id: String, source: String? = nil) -> ToolCallResult {
+        guard let cell = streamCells[id] else { return .text("(unknown cell)", isError: true) }
+        if !cell.failed {
+            if let source {
+                if source.hasPrefix(cell.source) {
+                    cell.source = source
+                } else {
+                    cell.failed = true
+                    cell.error = "source diverged; earlier statements may have run"
+                }
+            }
+            if !cell.failed {
+                cell.finished = true
+                executeNewlyComplete(cell, isFinal: true)
+            }
+        }
+        return cellResult(cell)
+    }
+
+    /// The host will never deliver this call's final source (skipped/aborted). Any
+    /// statements already run stay run; the result says how many.
+    func abandonStream(id: String) -> ToolCallResult {
+        guard let cell = streamCells[id] else { return .text("(unknown cell)", isError: true) }
+        if !cell.finished {
+            cell.failed = true
+            if cell.error == nil {
+                cell.error = "call abandoned after \(cell.completed) statement(s) had run"
+            }
+        }
+        return cellResult(cell)
+    }
+
+    private func executeNewlyComplete(_ cell: StreamCell, isFinal: Bool) {
+        let chars = Array(cell.source)
+        while !cell.failed {
+            if let end = Self.nextStatementEnd(chars, from: cell.executed) {
+                let statement = String(chars[cell.executed..<end])
+                cell.executed = end
+                runStatement(statement, cell: cell)
+            } else if isFinal, cell.executed < chars.count {
+                let statement = String(chars[cell.executed..<chars.count])
+                cell.executed = chars.count
+                runStatement(statement, cell: cell)
+            } else {
+                break
+            }
+        }
+    }
+
+    private func runStatement(_ statement: String, cell: StreamCell) {
+        let trimmed = statement.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let contextRef = UnsafeMutableRawPointer(context.jsGlobalContextRef)
+        ocu_js_set_time_limit(contextRef, 30.0)
+        defer { ocu_js_clear_time_limit(contextRef) }
+        context.exception = nil
+        context.evaluateScript(trimmed)
+        if let exception = context.exception {
+            cell.failed = true
+            cell.error = exception.toString() ?? "JavaScript error"
+            return
+        }
+        cell.completed += 1
+    }
+
+    private func cellResult(_ cell: StreamCell) -> ToolCallResult {
+        var text = output
+        if cell.failed, let error = cell.error {
+            if !text.isEmpty { text += "\n" }
+            text += "Error: " + error
+        }
+        var content: [ToolResultContentItem] = []
+        if !text.isEmpty { content.append(.text(text)) }
+        content.append(contentsOf: images.map { .pngImage($0) })
+        if content.isEmpty { content.append(.text("(no output)")) }
+        return ToolCallResult(content: content, isError: cell.failed)
+    }
+
+    /// Index just past the next top-level statement boundary (`;` or newline at
+    /// bracket depth 0, outside strings/templates/comments), or nil if the current
+    /// prefix has no complete statement left.
+    ///
+    /// ponytail: naive scanner (does not re-enter string parsing inside `${}`, and
+    /// does not distinguish a regex literal from division). Swap for a real JS
+    /// parser (meriyah, as Codex bundles) if models hit the edges.
+    static func nextStatementEnd(_ chars: [Character], from start: Int) -> Int? {
+        var i = start
+        var depth = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
+                while i < chars.count, chars[i] != "\n" { i += 1 }
+                continue
+            }
+            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
+                i += 2
+                while i + 1 < chars.count, !(chars[i] == "*" && chars[i + 1] == "/") { i += 1 }
+                i = min(i + 2, chars.count)
+                continue
+            }
+            if c == "\"" || c == "'" {
+                i += 1
+                while i < chars.count {
+                    if chars[i] == "\\" { i += 2; continue }
+                    if chars[i] == c { i += 1; break }
+                    i += 1
+                }
+                continue
+            }
+            if c == "`" {
+                i += 1
+                while i < chars.count {
+                    if chars[i] == "\\" { i += 2; continue }
+                    if chars[i] == "`" { i += 1; break }
+                    if chars[i] == "$", i + 1 < chars.count, chars[i + 1] == "{" {
+                        i += 2
+                        var braces = 1
+                        while i < chars.count, braces > 0 {
+                            if chars[i] == "{" { braces += 1 }
+                            else if chars[i] == "}" { braces -= 1 }
+                            i += 1
+                        }
+                        continue
+                    }
+                    i += 1
+                }
+                continue
+            }
+            if c == "(" || c == "[" || c == "{" { depth += 1; i += 1; continue }
+            if c == ")" || c == "]" || c == "}" { depth = max(0, depth - 1); i += 1; continue }
+            if depth == 0, c == ";" || c == "\n" { return i + 1 }
+            i += 1
+        }
+        return nil
     }
 
     private func configure(_ ctx: JSContext) {

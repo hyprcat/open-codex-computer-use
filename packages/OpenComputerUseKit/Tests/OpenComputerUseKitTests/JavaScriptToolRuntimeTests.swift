@@ -140,6 +140,90 @@ final class JavaScriptToolRuntimeTests: XCTestCase {
         XCTAssertTrue(result.primaryText?.contains("Ghost") ?? false)
     }
 
+    // MARK: streaming / speculative execution
+
+    func testStreamRunsStatementsAsPrefixGrows() {
+        var calls: [String] = []
+        let rt = runtime { tool, args in
+            if tool == "type_text" { calls.append(args["text"] as? String ?? "") }
+            return .text("ok")
+        }
+        rt.beginStream(id: "c1")
+        rt.feedStream(id: "c1", source: "cua.type(\"X\", \"a\");\n")
+        XCTAssertEqual(calls, ["a"])  // ran before the call finished
+        rt.feedStream(id: "c1", source: "cua.type(\"X\", \"a\");\ncua.type(\"X\", \"b\");\n")
+        XCTAssertEqual(calls, ["a", "b"])
+        let result = rt.finishStream(id: "c1")
+        XCTAssertFalse(result.isError)
+    }
+
+    func testStreamFinalTrailingStatementRuns() {
+        let rt = runtime()
+        rt.beginStream(id: "c1")
+        rt.feedStream(id: "c1", source: "write(\"x\")")  // no terminator yet
+        let result = rt.finishStream(id: "c1")
+        XCTAssertEqual(result.primaryText, "x")
+    }
+
+    func testStreamSharedScopeAcrossStatements() {
+        let rt = runtime()
+        rt.beginStream(id: "c1")
+        rt.feedStream(id: "c1", source: "globalThis.n = 5;\n")
+        let result = rt.finishStream(id: "c1", source: "globalThis.n = 5;\nwrite(String(globalThis.n + 1));\n")
+        XCTAssertEqual(result.primaryText, "6")
+    }
+
+    func testStreamDivergenceFailsAfterEffects() {
+        var calls = 0
+        let rt = runtime { tool, _ in
+            if tool == "type_text" { calls += 1 }
+            return .text("ok")
+        }
+        rt.beginStream(id: "c1")
+        rt.feedStream(id: "c1", source: "cua.type(\"X\", \"a\");\n")
+        XCTAssertEqual(calls, 1)
+        rt.feedStream(id: "c1", source: "cua.type(\"X\", \"b\");\n")  // not a prefix of prior
+        let result = rt.finishStream(id: "c1")
+        XCTAssertTrue(result.isError)
+        XCTAssertTrue(result.primaryText?.contains("diverged") ?? false)
+        XCTAssertEqual(calls, 1)  // the already-run effect stays run
+    }
+
+    func testStreamAbandonReportsStatementsRun() {
+        let rt = runtime()
+        rt.beginStream(id: "c1")
+        rt.feedStream(id: "c1", source: "write(\"a\");\n")
+        let result = rt.abandonStream(id: "c1")
+        XCTAssertTrue(result.isError)
+        XCTAssertTrue(result.primaryText?.contains("abandoned after 1") ?? false)
+    }
+
+    func testStreamStatementErrorStopsRemaining() {
+        var typed = 0
+        let rt = runtime { tool, _ in
+            if tool == "type_text" { typed += 1 }
+            return .text("ok")
+        }
+        rt.beginStream(id: "c1")
+        // second statement throws; a later feed must not run more
+        rt.feedStream(id: "c1", source: "cua.type(\"X\",\"a\");\nthrow new Error(\"boom\");\n")
+        rt.feedStream(id: "c1", source: "cua.type(\"X\",\"a\");\nthrow new Error(\"boom\");\ncua.type(\"X\",\"c\");\n")
+        let result = rt.finishStream(id: "c1")
+        XCTAssertTrue(result.isError)
+        XCTAssertEqual(typed, 1)
+    }
+
+    func testNextStatementEndRespectsBracketsAndStrings() {
+        // a semicolon inside a string or braces is not a boundary
+        let a = Array("f(\"a;b\");\n")
+        XCTAssertEqual(JavaScriptToolRuntime.nextStatementEnd(a, from: 0), a.firstIndex(of: ";").map { _ in "f(\"a;b\")".count + 1 })
+        let b = Array("if (x) {\n  y();\n}\n")
+        // no top-level boundary until the closing brace's line
+        let end = JavaScriptToolRuntime.nextStatementEnd(b, from: 0)
+        XCTAssertNotNil(end)
+        XCTAssertEqual(String(b[0..<end!]).contains("}"), true)
+    }
+
     func testScreenshotRoundTripsImage() {
         let bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01, 0x02])
         let rt = runtime { _, _ in
