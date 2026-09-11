@@ -53,6 +53,11 @@ enum OpenComputerUseMain {
                 _ = NSApplication.shared.setActivationPolicy(.accessory)
             }
             OpenComputerUseStreamServer().run()
+        case .piBridge:
+            if VisualCursorSupport.isEnabled {
+                _ = NSApplication.shared.setActivationPolicy(.accessory)
+            }
+            OpenComputerUsePiBridgeServer().run()
         case .doctor:
             let permissions = PermissionDiagnostics.current()
             print(permissions.summary)

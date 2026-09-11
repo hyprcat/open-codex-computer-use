@@ -294,6 +294,19 @@ final class JavaScriptToolRuntime {
         }
         ctx.setObject(elementsBlock, forKeyedSubscript: "__ocuElements" as NSString)
 
+        // Generative UI: the agent emits polished component trees for important steps, and a
+        // one-line status narration, streamed to TIDE_UI_FILE for the Tide app to render.
+        let uiBlock: @convention(block) (String) -> Void = { json in
+            let node = json.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? json
+            Self.appendUIRaw(["kind": "ui", "node": node])
+        }
+        ctx.setObject(uiBlock, forKeyedSubscript: "__ocuUI" as NSString)
+
+        let statusBlock: @convention(block) (String) -> Void = { text in
+            Self.appendUIRaw(["kind": "status", "text": text])
+        }
+        ctx.setObject(statusBlock, forKeyedSubscript: "__ocuStatus" as NSString)
+
         ctx.evaluateScript(Self.banner)
     }
 
@@ -361,6 +374,19 @@ final class JavaScriptToolRuntime {
         return text
     }
 
+    private static func appendUIRaw(_ object: [String: Any]) {
+        guard let path = ProcessInfo.processInfo.environment["TIDE_UI_FILE"],
+            let data = try? JSONSerialization.data(withJSONObject: object),
+            let line = (String(data: data, encoding: .utf8).map { $0 + "\n" })?.data(using: .utf8) else { return }
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(line)
+            try? handle.close()
+        } else {
+            try? line.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
     private static let banner = """
     globalThis.cua = {
       call: function (tool, args) {
@@ -400,6 +426,10 @@ final class JavaScriptToolRuntime {
     };
     globalThis.console.error = globalThis.console.log;
     globalThis.console.warn = globalThis.console.log;
+    globalThis.ui = function (node) { __ocuUI(JSON.stringify(node)); };
+    globalThis.status = function (text) { __ocuStatus(String(text)); };
+    globalThis.cua.ui = globalThis.ui;
+    globalThis.cua.status = globalThis.status;
     globalThis.__ocuRun = function (src) { return (new Function(src))(); };
     """
 }

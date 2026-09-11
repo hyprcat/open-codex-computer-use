@@ -4,6 +4,7 @@ public enum OpenComputerUseCLICommand: Equatable {
     case launchOnboarding
     case mcp
     case stream
+    case piBridge
     case doctor
     case listApps
     case snapshot(app: String, textLimit: SnapshotTextLimit = .defaults, treeLimits: AccessibilityTreeLimits = .defaults)
@@ -35,7 +36,7 @@ public func shouldUseMacOSAppAgentProxy(
         return !runningFromLaunchServicesAppInstance
     case .mcp, .doctor, .listApps, .snapshot, .call:
         return true
-    case .stream, .turnEnded, .help, .version:
+    case .stream, .piBridge, .turnEnded, .help, .version:
         return false
     }
 }
@@ -79,6 +80,8 @@ public func parseOpenComputerUseCLI(arguments: [String]) throws -> OpenComputerU
         return try parseSimpleCommand(name: "mcp", arguments: Array(arguments.dropFirst()), result: .mcp)
     case "stream":
         return try parseSimpleCommand(name: "stream", arguments: Array(arguments.dropFirst()), result: .stream)
+    case "pi-bridge":
+        return try parseSimpleCommand(name: "pi-bridge", arguments: Array(arguments.dropFirst()), result: .piBridge)
     case "doctor":
         return try parseSimpleCommand(name: "doctor", arguments: Array(arguments.dropFirst()), result: .doctor)
     case "list-apps":
@@ -111,6 +114,7 @@ public func openComputerUseHelpText(command: String? = nil) -> String {
         Commands:
           mcp                  Start the stdio MCP server.
           stream               Start the stdio streaming (speculative js) server for agent feeders.
+          pi-bridge            Drive the js engine from a pi_agent_rust brain (SPTC_WIRE frames).
           doctor               Print permission status and launch onboarding if needed.
           list-apps            Print running or recently used apps.
           snapshot <app>       Print the current accessibility snapshot for an app.

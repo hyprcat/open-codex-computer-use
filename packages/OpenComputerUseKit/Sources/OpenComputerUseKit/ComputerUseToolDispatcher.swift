@@ -54,7 +54,25 @@ public final class ComputerUseToolDispatcher {
     )
     #endif
 
+    // When OPEN_COMPUTER_USE_DEFAULT_BACKGROUND=1, input defaults to SkyLight (no focus/pointer
+    // steal) unless the caller specifies a method. Cross-Space/covered windows still use
+    // window_placement=agent_display explicitly (see the occlusion note in get_app_state).
+    private static var backgroundDefault: Bool {
+        ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_DEFAULT_BACKGROUND"] == "1"
+    }
+
+    private func resolvedClickMethod(_ arguments: [String: Any]) throws -> ClickMethod {
+        if let raw = optionalString("click_method", in: arguments) { return try parseClickMethod(raw) }
+        return Self.backgroundDefault ? .skyClick : .auto
+    }
+
+    private func resolvedKeyMethod(_ arguments: [String: Any]) throws -> KeyMethod {
+        if let raw = optionalString("key_method", in: arguments) { return try parseKeyMethod(raw) }
+        return Self.backgroundDefault ? .skyKey : .auto
+    }
+
     public func callTool(name: String, arguments: [String: Any]) throws -> ToolCallResult {
+        Self.logStep(name: name, arguments: arguments)
         switch name {
         case "list_apps":
             return service.listApps()
@@ -76,7 +94,7 @@ public final class ComputerUseToolDispatcher {
                 y: optionalDouble("y", in: arguments),
                 clickCount: Int(optionalDouble("click_count", in: arguments) ?? 1),
                 mouseButton: optionalString("mouse_button", in: arguments) ?? "left",
-                clickMethod: try parseClickMethod(optionalString("click_method", in: arguments))
+                clickMethod: try resolvedClickMethod(arguments)
             )
         case "perform_secondary_action":
             return try service.performSecondaryAction(
@@ -103,13 +121,13 @@ public final class ComputerUseToolDispatcher {
             return try service.typeText(
                 app: requireString("app", in: arguments),
                 text: requireString("text", in: arguments),
-                keyMethod: try parseKeyMethod(optionalString("key_method", in: arguments))
+                keyMethod: try resolvedKeyMethod(arguments)
             )
         case "press_key":
             return try service.pressKey(
                 app: requireString("app", in: arguments),
                 key: requireString("key", in: arguments),
-                keyMethod: try parseKeyMethod(optionalString("key_method", in: arguments))
+                keyMethod: try resolvedKeyMethod(arguments)
             )
         case "set_value":
             return try service.setValue(
@@ -130,6 +148,41 @@ public final class ComputerUseToolDispatcher {
             #endif
         default:
             throw ComputerUseError.unsupportedTool(name)
+        }
+    }
+
+    // Live agent feedback: append a human-readable line per real action to TIDE_STEPS_FILE
+    // (set by the Tide app), which the app tails to show what the agent is doing right now.
+    private static func logStep(name: String, arguments: [String: Any]) {
+        guard name != "js",
+            let path = ProcessInfo.processInfo.environment["TIDE_STEPS_FILE"],
+            let line = stepDescription(name: name, arguments: arguments),
+            let data = (line + "\n").data(using: .utf8) else { return }
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    private static func stepDescription(name: String, arguments: [String: Any]) -> String? {
+        let app = (arguments["app"] as? String).map { " · \($0)" } ?? ""
+        switch name {
+        case "list_apps": return "Looking at open apps"
+        case "get_app_state": return "Reading the screen\(app)"
+        case "click": return "Clicking\(app)"
+        case "type_text":
+            let text = (arguments["text"] as? String) ?? ""
+            let clip = text.count > 32 ? String(text.prefix(32)) + "…" : text
+            return "Typing “\(clip)”\(app)"
+        case "press_key": return "Pressing \((arguments["key"] as? String) ?? "key")\(app)"
+        case "scroll": return "Scrolling\(app)"
+        case "drag": return "Dragging\(app)"
+        case "set_value": return "Setting a field\(app)"
+        case "perform_secondary_action": return "\((arguments["action"] as? String) ?? "Action")\(app)"
+        default: return nil
         }
     }
 
