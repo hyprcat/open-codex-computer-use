@@ -253,7 +253,7 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testToolDefinitionCount() {
-        XCTAssertEqual(ToolDefinitions.all.count, 9)
+        XCTAssertEqual(ToolDefinitions.all.count, 13)
     }
 
     func testReadToolArgumentsAcceptsJSONObject() throws {
