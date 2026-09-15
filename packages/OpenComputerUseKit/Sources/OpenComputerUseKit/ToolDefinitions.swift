@@ -69,6 +69,45 @@ public enum ToolDefinitions {
             )
         ),
         ToolDefinition(
+            name: "prepare_agent_display",
+            description: "Create the agent display: an off-screen display that prepared app windows are moved to, so work happens without taking over the user's screen. Idempotent. This tool is part of plugin `Computer Use`.",
+            annotations: defaultAnnotations(),
+            inputSchema: objectSchema(properties: [:], required: [])
+        ),
+        ToolDefinition(
+            name: "prepare_app",
+            description: "Move an app's window to the agent display so it can be worked on without taking over the user's screen, launching or reopening the app if needed. Returns the `window_id` to pass to restore_prepared_window or close_prepared_window when finished. Focus returns to whatever was front. An app in full screen is left alone. This tool is part of plugin `Computer Use`.",
+            annotations: defaultAnnotations(),
+            inputSchema: objectSchema(
+                properties: [
+                    "app": stringProperty(description: "App name or bundle identifier"),
+                    "new_window": [
+                        "type": "boolean",
+                        "description": "Open a new window through the app's menu bar instead of using the window it already has, leaving the user's own windows untouched. Defaults to false.",
+                    ],
+                ],
+                required: ["app"]
+            )
+        ),
+        ToolDefinition(
+            name: "restore_prepared_window",
+            description: "Put a prepared window back where the user had it, while the app keeps running. A window that prepare_app opened is closed instead. This tool is part of plugin `Computer Use`.",
+            annotations: defaultAnnotations(),
+            inputSchema: objectSchema(
+                properties: ["window_id": numberProperty(description: "The window_id returned by prepare_app")],
+                required: ["window_id"]
+            )
+        ),
+        ToolDefinition(
+            name: "close_prepared_window",
+            description: "Close a prepared window with its own close button, leaving the app's other windows untouched. This tool is part of plugin `Computer Use`.",
+            annotations: defaultAnnotations(),
+            inputSchema: objectSchema(
+                properties: ["window_id": numberProperty(description: "The window_id returned by prepare_app")],
+                required: ["window_id"]
+            )
+        ),
+        ToolDefinition(
             name: "get_app_state",
             description: "Start an app use session if needed, then get the state of the app's key window and return a screenshot and accessibility tree. This must be called once per assistant turn before interacting with the app. This tool is part of plugin `Computer Use`.",
             annotations: readOnlyAnnotations(),

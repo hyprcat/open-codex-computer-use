@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 func normalizedElementIndexArgument(_ value: Any?) -> String? {
@@ -47,6 +48,17 @@ public final class ComputerUseToolDispatcher {
         switch name {
         case "list_apps":
             return service.listApps()
+        case "prepare_agent_display":
+            return try AgentPreparation.display()
+        case "prepare_app":
+            return try AgentPreparation.app(
+                query: requireString("app", in: arguments),
+                newWindow: arguments["new_window"] as? Bool ?? false
+            )
+        case "close_prepared_window":
+            return try restorePreparedWindow(requireWindowID(in: arguments, tool: name), close: true)
+        case "restore_prepared_window":
+            return try restorePreparedWindow(requireWindowID(in: arguments, tool: name), close: false)
         case "get_app_state":
             return try service.getAppState(
                 app: requireString("app", in: arguments),
@@ -171,6 +183,21 @@ public final class ComputerUseToolDispatcher {
         }
 
         return value
+    }
+
+    private func requireWindowID(in arguments: [String: Any], tool: String) throws -> CGWindowID {
+        guard let id = optionalDouble("window_id", in: arguments), id > 0 else {
+            throw ComputerUseError.invalidArguments("\(tool) requires window_id")
+        }
+        return CGWindowID(id)
+    }
+
+    private func restorePreparedWindow(_ id: CGWindowID, close: Bool) throws -> ToolCallResult {
+        switch try AgentDisplay.shared.restore(windowID: id, close: close) {
+        case .home: return .text("restored \(id)")
+        case .closed: return .text("closed \(id)")
+        case .heldOpen: return .text("window \(id) is still open (a sheet holds it); it is back on the user's screen, no longer parked")
+        }
     }
 
     private func optionalDouble(_ key: String, in arguments: [String: Any]) -> Double? {

@@ -116,6 +116,9 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
     // Read-only observation symbols used to replace fixed sleeps with polls.
     private static let copySpacesForWindowsSymbol = "SLSCopySpacesForWindows"
     private static let copyManagedDisplaySpacesSymbol = "SLSCopyManagedDisplaySpaces"
+    private static let getFrontProcessSymbol = "_SLPSGetFrontProcess"
+    private static let setFrontProcessSymbol = "_SLPSSetFrontProcessWithOptions"
+    private static let userGeneratedSwitch: UInt32 = 0x200
     private static let axElementGetWindowSymbol = "_AXUIElementGetWindow"
     // WindowServer reads the window's backing store on the GPU: works for
     // covered windows and for windows on inactive (fullscreen) Spaces where
@@ -139,6 +142,8 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
     private typealias EnableWindowOcclusionNotificationsFunction = @convention(c) (UInt32, CGWindowID, UInt8, UnsafeMutablePointer<UInt8>?) -> Int32
     private typealias CopySpacesForWindowsFunction = @convention(c) (UInt32, Int32, CFArray) -> Unmanaged<CFArray>?
     private typealias CopyManagedDisplaySpacesFunction = @convention(c) (UInt32) -> Unmanaged<CFArray>?
+    private typealias GetFrontProcessFunction = @convention(c) (UnsafeMutableRawPointer?) -> Int32
+    private typealias SetFrontProcessFunction = @convention(c) (UnsafeRawPointer?, CGWindowID, UInt32) -> Int32
     private typealias AXElementGetWindowFunction = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
     private typealias HardwareCaptureWindowListFunction = @convention(c) (UInt32, UnsafePointer<CGWindowID>, Int32, UInt32) -> Unmanaged<CFArray>?
 
@@ -153,6 +158,8 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
     private let enableWindowOcclusionNotificationsFunction: EnableWindowOcclusionNotificationsFunction?
     private let copySpacesForWindowsFunction: CopySpacesForWindowsFunction?
     private let copyManagedDisplaySpacesFunction: CopyManagedDisplaySpacesFunction?
+    private let getFrontProcessFunction: GetFrontProcessFunction?
+    private let setFrontProcessFunction: SetFrontProcessFunction?
     private let axElementGetWindowFunction: AXElementGetWindowFunction?
     private let hardwareCaptureWindowListFunction: HardwareCaptureWindowListFunction?
 
@@ -175,6 +182,8 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
         enableWindowOcclusionNotificationsFunction = Self.resolve(handle: handle, symbol: Self.enableWindowOcclusionNotificationsSymbol)
         copySpacesForWindowsFunction = Self.resolve(handle: handle, symbol: Self.copySpacesForWindowsSymbol)
         copyManagedDisplaySpacesFunction = Self.resolve(handle: handle, symbol: Self.copyManagedDisplaySpacesSymbol)
+        getFrontProcessFunction = Self.resolve(handle: handle, symbol: Self.getFrontProcessSymbol)
+        setFrontProcessFunction = Self.resolve(handle: handle, symbol: Self.setFrontProcessSymbol)
         axElementGetWindowFunction = Self.resolve(handle: appServicesHandle, symbol: Self.axElementGetWindowSymbol)
         hardwareCaptureWindowListFunction = Self.resolve(handle: handle, symbol: Self.hardwareCaptureWindowListSymbol)
 
@@ -240,6 +249,31 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
         else { return nil }
         let image = unsafeBitCast(CFArrayGetValueAtIndex(array, 0), to: CGImage.self)
         return image.width > 0 && image.height > 0 ? image : nil
+    }
+
+    /// Space ids that belong to a full-screen Space (type 4).
+    func fullScreenSpaces() -> Set<UInt64> {
+        guard let mainConnectionFunction, let copyManagedDisplaySpacesFunction,
+              let displays = copyManagedDisplaySpacesFunction(mainConnectionFunction())?.takeRetainedValue() as? [[String: Any]]
+        else { return [] }
+        return Set(displays.flatMap { ($0["Spaces"] as? [[String: Any]]) ?? [] }.compactMap { space in
+            (space["type"] as? NSNumber)?.intValue == 4 ? (space["id64"] as? NSNumber)?.uint64Value : nil
+        })
+    }
+
+    /// The front process serial number, so it can be put back afterwards.
+    func frontProcess() -> [UInt8]? {
+        guard let getFrontProcessFunction else { return nil }
+        var psn = [UInt8](repeating: 0, count: 8)
+        return getFrontProcessFunction(&psn) == 0 ? psn : nil
+    }
+
+    /// Make `psn` the front process again, as a user-generated switch, if it no longer is.
+    /// False when WindowServer refused the switch.
+    @discardableResult
+    func restoreFrontProcess(_ psn: [UInt8]) -> Bool {
+        guard let setFrontProcessFunction, let current = frontProcess(), current != psn else { return true }
+        return psn.withUnsafeBytes { setFrontProcessFunction($0.baseAddress, 0, Self.userGeneratedSwitch) } == 0
     }
 
     /// CGWindowID behind an AX window element.
