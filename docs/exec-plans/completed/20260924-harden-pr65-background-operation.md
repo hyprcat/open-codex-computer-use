@@ -43,11 +43,14 @@
 
 - [x] 完成代码审查并确认阻塞项。
 - [x] 合并最新 `main`，保留新增 derived implementation 对应的许可声明。
-- [ ] 完成实现与测试。
-- [ ] 完成验证、history 与推送。
+- [x] 完成实现与测试。
+- [x] 完成验证、history 与待推送提交。
 
 ## 决策记录
 
 - 2026-09-24：采用 merge commit 同步 `main`，避免改写贡献者已有提交历史。
 - 2026-09-24：保留 `THIRD_PARTY_NOTICES.md`，因为 PR 明确包含 derived implementation，不能在冲突解决时静默丢弃许可文本。
 - 2026-09-24：不运行 opt-in GUI live tests；它们会切换窗口/Space 或注入真实输入，需要单独安排无人使用桌面的验证窗口。
+- 2026-09-24：一过性的 CLI connection 会在关闭时清理 background state；需要连续 park/action/restore 时使用同一个 JS、REPL、MCP 或 `call --calls` session。
+- 2026-09-24：无侵入验证完成；Node 全套唯一失败是最新 `main` 已复现的 Worker late-error timing case，不归因于本次改动。
+- 2026-09-24：实现与文档收敛为 maintainer commit `f97e890`；plan 随完成记录归档，推送后由 PR 继续承载 review 状态。
