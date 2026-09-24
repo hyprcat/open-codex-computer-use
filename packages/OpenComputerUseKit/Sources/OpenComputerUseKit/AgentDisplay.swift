@@ -201,6 +201,24 @@ final class AgentDisplay: @unchecked Sendable {
         }
     }
 
+    /// Restore every window parked for one application. Unlike process-exit
+    /// cleanup, an explicit restore reports a live failure to the caller after
+    /// attempting the remaining windows.
+    func restoreAll(pid: pid_t) throws {
+        let windowIDs = parkedWindowIDs(pid: pid)
+        var firstError: Error?
+        for windowID in windowIDs {
+            do {
+                try restore(windowID: windowID)
+            } catch {
+                firstError = firstError ?? error
+            }
+        }
+        if let firstError {
+            throw firstError
+        }
+    }
+
     // MARK: - Display lifecycle (call with lock held)
 
     private func ensureDisplay() throws -> CGRect {

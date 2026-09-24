@@ -32,6 +32,7 @@ final class MCPAppRuntime: NSObject, NSApplicationDelegate {
             queue: .main
         ) { _ in
             Task { @MainActor in
+                resetOpenComputerUseBackgroundWindowState()
                 resetOpenComputerUseVisualCursor()
             }
         }

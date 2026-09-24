@@ -535,15 +535,14 @@ public final class ComputerUseService {
         guard snapshot.mode != .fixture else {
             throw ComputerUseError.message("window_placement '\(windowPlacement.rawValue)' is not supported for fixture apps")
         }
-        guard let windowID = snapshot.targetWindowID, let windowElement = snapshot.windowElement else {
-            throw ComputerUseError.stateUnavailable("window_placement '\(windowPlacement.rawValue)' requires a current target window. Run get_app_state again.")
-        }
-
         switch windowPlacement {
         case .agentDisplay:
+            guard let windowID = snapshot.targetWindowID, let windowElement = snapshot.windowElement else {
+                throw ComputerUseError.stateUnavailable("window_placement 'agent_display' requires a current target window. Run get_app_state again.")
+            }
             try AgentDisplay.shared.park(windowID: windowID, pid: snapshot.app.pid, window: windowElement)
         case .restore:
-            try AgentDisplay.shared.restore(windowID: windowID)
+            try AgentDisplay.shared.restoreAll(pid: snapshot.app.pid)
         case .keep:
             break
         }

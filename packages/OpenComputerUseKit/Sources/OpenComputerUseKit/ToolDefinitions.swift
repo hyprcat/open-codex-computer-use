@@ -71,7 +71,7 @@ public enum ToolDefinitions {
         ToolDefinition(
             name: "get_app_state",
             description: "Start an app use session if needed, then get the state of the app's key window and return a screenshot and accessibility tree. This must be called once per assistant turn before interacting with the app. This tool is part of plugin `Computer Use`.",
-            annotations: readOnlyAnnotations(),
+            annotations: defaultAnnotations(),
             inputSchema: objectSchema(
                 properties: [
                     "app": stringProperty(description: "App name or bundle identifier"),

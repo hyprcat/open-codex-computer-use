@@ -182,6 +182,7 @@ private final class MacOSAppAgentRuntime: NSObject, NSApplicationDelegate {
             queue: .main
         ) { _ in
             Task { @MainActor in
+                resetOpenComputerUseBackgroundWindowState()
                 resetOpenComputerUseVisualCursor()
             }
         }
@@ -308,7 +309,10 @@ private final class AppAgentConnection: @unchecked Sendable {
             close(fileDescriptor)
             return
         }
-        defer { fclose(file) }
+        defer {
+            server.endSession()
+            fclose(file)
+        }
 
         while let line = readAgentLine(file) {
             let response = handle(requestLine: line)

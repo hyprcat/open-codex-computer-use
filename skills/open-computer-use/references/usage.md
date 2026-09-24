@@ -51,6 +51,16 @@ await app.typeText("Hello");
 await app.getAXState();
 ```
 
+The code-first surface also forwards macOS background-operation options:
+
+```js
+var chrome = await cua.getApp("Google Chrome");
+await chrome.getAXState({ windowPlacement: "agent_display" });
+await chrome.typeText("hello", { keyMethod: "sky_key" });
+await chrome.pressKey("cmd+a", { keyMethod: "sky_key" });
+await chrome.getAXState({ windowPlacement: "restore" });
+```
+
 Bindings persist across `js` calls until `js_reset`. See
 `docs/references/js-repl.md` for the full API and security boundary.
 
@@ -188,11 +198,13 @@ open-computer-use call press_key --args '{"app":"Google Chrome","key":"cmd+a","k
 Covered windows and windows on other Spaces: `get_app_state` never activates or raises a window that is off-screen, and it pins the visibility of every window it captures while that window is unoccluded, so covering it or switching Spaces afterwards keeps Chromium/Electron content in the tree and screenshots live. If the tree ends with a note that the window is covered, the app had already hidden its content before the first snapshot. Either bring the window into view once and snapshot again, or park it on the agent's own invisible display:
 
 ```sh
-open-computer-use call get_app_state --args '{"app":"Google Chrome","window_placement":"agent_display"}'
-open-computer-use call get_app_state --args '{"app":"Google Chrome","window_placement":"restore"}'
+open-computer-use call --calls '[
+  {"tool":"get_app_state","args":{"app":"Google Chrome","window_placement":"agent_display"}},
+  {"tool":"get_app_state","args":{"app":"Google Chrome","window_placement":"restore"}}
+]'
 ```
 
-`agent_display` moves the window's frame onto a virtual display the user never sees (macOS only): the app renders it, exposes its full tree and accepts `sky_click` / `sky_key`, while the user's Space, focus and pointer stay untouched. The window is gone from the user's desktop until `restore` or until the runtime exits, so treat it as a deliberate, temporary step. `sky_click` and `sky_key` accept covered and other-Space windows.
+`agent_display` moves the window's frame onto a virtual display the user never sees (macOS only): the app renders it, exposes its full tree and accepts `sky_click` / `sky_key`, while the user's Space, focus and pointer stay untouched. The window is gone from the user's desktop until `restore`, the assistant turn ends, the MCP/REPL connection closes, or the runtime exits, so treat it as a deliberate, temporary step. `restore` restores every window parked by the runtime for that app. Keep park/action/restore calls in one `js`, REPL, MCP, or `call --calls` session; a one-shot CLI connection restores its background state when it closes. `sky_click` and `sky_key` accept covered and other-Space windows.
 
 `sky_key` types into whatever element the target window has focused, so click or AX-focus the field first. It fails closed for hidden apps (`cmd+h`), stale window ids, and missing private symbols; Windows and Linux return an unsupported error.
 

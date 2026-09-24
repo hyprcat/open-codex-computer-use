@@ -95,7 +95,7 @@ final class AgentDisplayLiveTests: XCTestCase {
         XCTAssertTrue(acted.name.hasPrefix("ocu-agent-ok|clicks=1|"), "click and keys must reach the parked window")
 
         // Restore: window back where it was, display gone.
-        try AgentDisplay.shared.restore(windowID: window.id)
+        try AgentDisplay.shared.restoreAll(pid: window.pid)
         let restored = try waitForWindow(pid: window.pid, nameContaining: "ocu-agent-", onScreenOnly: false)
         XCTAssertEqual(restored.bounds.origin, window.bounds.origin, "restore must put the window back")
         RunLoop.current.run(until: Date().addingTimeInterval(2.0))

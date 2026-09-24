@@ -29,6 +29,7 @@
 - npm CLI 本身也由 Node 启动。`ocu js` 只在一次执行期间保留 Worker/native MCP child；`ocu repl` 在当前 terminal session 内保留它们；`ocu mcp` 则跟随 stdio connection。macOS 的隐藏 app agent 是独立的权限身份，可能在这些前台命令退出后继续驻留。
 - `ocu --help` 始终展示 `js` / `repl`；`ocu capabilities --json` 可在不启动 native MCP 的情况下检查 Node、adapter、kernel 和 native artifact。当前 npm shebang 仍要求 shell 能从 PATH 启动 Node，所以“完全无 Node”必须在更外层用 native bootstrap 解决。
 - macOS `click_method=sky_click` 额外依赖 SkyLight / ApplicationServices 私有符号 `SLEventPostToPid`、`SLEventSetIntegerValueField`、`CGEventSetWindowLocation`、`SLPSPostEventRecordTo` 和 `GetProcessForPID`。截图主路径依赖可选的 `SLSHWCaptureWindowList`，窗口绑定依赖可选的 `_AXUIElementGetWindow`，缺失时分别退回 ScreenCaptureKit 与标题启发式。运行时会动态探测并 fail closed，但 macOS 更新、签名方式或目标 app 输入策略变化仍可能让后台投递失效。受控实机回归除 DOM、前台 PID、鼠标和 z-order 外，还必须验证前台 AppKit active、key window、first responder 以及 resign/key-loss 计数。`key_method=sky_key` 复用同一组符号，实机回归还要确认被遮挡 Chrome 的输入框收到文字、`cmd+a` 菜单快捷键生效，以及投递结束后 Chrome 页面重新 blur。
+- agent display 依赖私有 `CGVirtualDisplay` 类、KVC key 与 selector。shim 会捕获 Objective-C exception 并把创建失败收敛成 capability unavailable；不允许私有 API 漂移直接终止 host 进程。显式 `restore` 按 app PID 恢复该 runtime 停放的全部窗口；turn-ended 和 MCP/REPL connection 关闭也会释放 occlusion keep-alive、恢复窗口并销毁空闲 display。
 - smoke suite 依赖本地 GUI session，不能把它当成无头环境命令。
 - 普通 app 的 `get_app_state` 结果依赖 AX tree 和窗口截图，复杂 app 上输出会有差异；Electron/WebView app 的 AX tree 通常很深，当前会压缩空 wrapper 并放宽遍历深度，以优先保留可操作文本、按钮和输入框。
 - Linux runtime 依赖已登录桌面用户 session；缺少 `XDG_RUNTIME_DIR`、`DBUS_SESSION_BUS_ADDRESS` 或 display 环境时，会尝试从 `/run/user/<uid>` 和常见桌面进程自动发现当前用户的 session env。纯 SSH tty 如果找不到桌面 session 仍不能直接访问 AT-SPI GUI tree。
@@ -40,7 +41,7 @@
 2. 用 `open-computer-use list-apps` 确认目标 app 是否被发现。
 3. 用 `open-computer-use snapshot <app>` 看是 transport 问题还是 snapshot / action 问题。
 4. 如果 `sky_key` 输入没有落到目标：先确认目标不是隐藏 app、窗口仍属于同一 PID；Chromium 目标可以在页面里观察 `document.hasFocus()`，投递期间应为 true。跑实机回归时不要同时在其他窗口打字，否则前台 fixture 会因为用户自己的操作失去 active。
-5. 如果被遮挡或其他 Space 的 Chromium / Electron 窗口 tree 里没有网页内容，看 tree 末尾是否有 “window is covered” 说明：说明 agent 第一次看到它时它已经被遮挡。让窗口露出一次再 `get_app_state`，之后再遮挡也会保留内容；或者显式调用 `get_app_state` 并传 `window_placement=agent_display` 把窗口停靠到 agent 显示器，用完 `restore`。
+5. 如果被遮挡或其他 Space 的 Chromium / Electron 窗口 tree 里没有网页内容，看 tree 末尾是否有 “window is covered” 说明：说明 agent 第一次看到它时它已经被遮挡。让窗口露出一次再 `get_app_state`，之后再遮挡也会保留内容；或者在同一 session 里显式调用 `get_app_state` 并传 `window_placement=agent_display` 把窗口停靠到 agent 显示器，用完 `restore`。若 session 已结束，runtime 会自动恢复，不需要另开连接补 `restore`。
 6. 如果只有 `sky_click` 失败，先重新执行 `get_app_state`，确认窗口仍属于同一进程且 app 未被隐藏；错误里出现 `missing SkyLight symbols` 时不要改用隐式 fallback，应按当前 macOS 版本重新验证私有 SPI。被遮挡的 Chromium 页面仍无效果时，再用受控页面区分 renderer 策略变化与坐标/window-local 映射问题。
 7. 如果只想验证仓库基线，直接跑 fixture + smoke，不要先在复杂第三方 app 上排查。
 8. 排查 Linux runtime 时，先确认目标命令是否由桌面用户运行，再用 `open-computer-use call list_apps` 和 `open-computer-use snapshot <app>` 区分 session/env 问题与 AT-SPI tree/action 问题。如果是 Codex MCP，重新执行 `open-computer-use install-codex-mcp` 后重启 Codex，确认配置仍是 `open-computer-use mcp`。
