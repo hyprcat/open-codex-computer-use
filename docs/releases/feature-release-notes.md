@@ -4,6 +4,10 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-09-22 | JS REPL CLI | 用户无需先配置 MCP host，也可以直接用 `ocu js` 执行一次性 Computer Use JavaScript，或用 `ocu repl` 在终端中复用持久 binding；Agent 还能先读取结构化 capability 状态。 | npm launcher 新增 positional/stdin/file 三种 `js` 输入、持久 terminal REPL、`capabilities [--json]` 和稳定 help availability；`ocu mcp` 仍保持原生 9-tool surface。 |
+| 2026-09-22 | JS REPL 错误传播与 read-back | `js` 代码抛出的异常立即以 `isError` 返回且保留 bindings，不再等到 30 s 超时并丢弃 session；macOS 上一批 action 不再为每个动作等待 150 ms 并重新读取整棵 AX tree，十次点击从数秒降到约一次 state read。 | REPL adapter 从 Node 的 `handleError`（Node 26）或 domain（Node 22）路径 settle 当前 evaluation；adapter 以 `OPEN_COMPUTER_USE_ACTION_READ_BACK=0` 启动 native runtime，macOS action 在该模式下返回短状态、跳过 settle 与 snapshot；默认 9-tool 行为不变，Linux / Windows 暂时忽略该变量。 |
+| 2026-09-21 | JS REPL Computer Use | Agent 可以用异步 JavaScript 绑定 app，并在一个 tool round trip 内完成 inspect、action、条件和最终验证，不必在多轮间搬运所有中间状态。 | Codex plugin 通过持久 Node.js Worker 和 app-bound `cua` API 暴露 `js` / `js_reset`；`open-computer-use mcp` 继续保留既有 9-tool compatibility surface。 |
+| 2026-09-17 | DeepSeek Harness 集成 | DSH 用户可以用一条命令安装 Open Computer Use，并在写入配置前发现错误的可执行文件或不兼容的 MCP server。 | 新增 DSH MCP 兼容安装器、turn-boundary 光标清理 hook 和非破坏性 skill 安装；安装前校验 server identity 与非空工具目录但不锁死工具数量，显式安装在 MCP 启动失败时 fail loud，并明确该路径不注册 DSH 的 first-class computer-use provider。 |
 | 2026-09-10 | macOS 拖拽修复 | 显式开启全局指针路径后，窗口移动、文本拖选与 Finder 拖放可收到启动真实拖拽所需的事件；默认路径的限制也会明确呈现。 | 发布 `0.3.5`：补齐拖拽位移、手势事件编号与 HID 投递时序，增加投递路径说明；同步升级 Go MCP SDK 到 `v1.4.1`。 |
 | 2026-09-08 | macOS agent display | 已经被遮挡或在其他 Space、内容被 app 隐藏的窗口，可以显式停靠到 agent 专用的不可见显示器上读取、点击和输入，用户的 Space、焦点、指针不受影响，用完可恢复原位。 | `get_app_state` 新增 `window_placement`（`keep` / `agent_display` / `restore`）：通过 `CGVirtualDisplay` 创建 agent 显示器并用 AX 位置移动窗口 frame，`restore`、MCP server 正常关闭或进程退出时移回并销毁显示器；失败时保留恢复记录供重试；Windows / Linux 返回 unsupported。 |
 | 2026-09-08 | macOS 被遮挡 / 其他 Space 窗口 | `get_app_state` 不再为其他 Space 的窗口激活或抬升应用；先看过一次的 Chromium / Electron 窗口在被遮挡或切换 Space 后仍能读到网页内容和实时截图；`sky_click` 可以点击被遮挡或其他 Space 的窗口。 | 窗口解析退到所有窗口列表；拍到未被遮挡的窗口后关闭其 WindowServer occlusion 通知，保存并在 MCP server 正常关闭或进程退出时恢复原始状态；Chromium 系 app 懒加载 AX tree 时最多重走 3 秒；`sky_click` 校验只要求窗口仍属于目标进程。 |
