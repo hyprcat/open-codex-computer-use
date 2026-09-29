@@ -335,6 +335,28 @@ export class PersistentJavaScriptSession {
     return owner;
   }
 
+  #settleOwner(owner, error) {
+    if (owner && owner === this.active) owner.reject(error);
+  }
+
+  #ownedAsyncCallback(callback) {
+    if (typeof callback !== "function") return callback;
+    const owner = evaluationOwner.getStore();
+    const session = this;
+    return function (...args) {
+      try {
+        const value = evaluationOwner.run(owner, () => Reflect.apply(callback, this, args));
+        if (value && typeof value.then === "function") {
+          void value.catch(error => session.#settleOwner(owner, error));
+        }
+        return value;
+      } catch (error) {
+        session.#settleOwner(owner, error);
+        return undefined;
+      }
+    };
+  }
+
   reset() {
     this.repl?.close();
     const input = new PassThrough();
@@ -346,12 +368,20 @@ export class PersistentJavaScriptSession {
     // call that threw: a late throw from a finished call is dropped, as the REPL would.
     const settle = error => {
       const owner = evaluationOwner.getStore();
-      if (owner && owner === this.active) owner.reject(error);
+      this.#settleOwner(owner, error);
       return "ignore";
     };
     this.repl = repl.start({ prompt: "", input, output, terminal: false, useGlobal: false, ignoreUndefined: true, breakEvalOnSigint: true, handleError: settle });
     this.repl.on("error", () => {});
     this.repl._domain?.on("error", settle);
+    // Node's REPL domain can report an old timer's exception while a newer eval is
+    // active, losing the AsyncLocalStorage owner that scheduled the callback. Wrap
+    // timer callbacks inside the REPL context so their errors settle only their own
+    // still-active evaluation and are otherwise dropped.
+    this.repl.context.setTimeout = (callback, delay, ...args) => setTimeout(this.#ownedAsyncCallback(callback), delay, ...args);
+    this.repl.context.setInterval = (callback, delay, ...args) => setInterval(this.#ownedAsyncCallback(callback), delay, ...args);
+    this.repl.context.setImmediate = (callback, ...args) => setImmediate(this.#ownedAsyncCallback(callback), ...args);
+    this.repl.context.queueMicrotask = callback => queueMicrotask(this.#ownedAsyncCallback(callback));
     const nodeRepl = {
       cwd: process.cwd(),
       homeDir: process.env.HOME ?? "",
