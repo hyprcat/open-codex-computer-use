@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-var version = "0.3.5"
+var version = "0.3.6"
 
 var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global"}
 

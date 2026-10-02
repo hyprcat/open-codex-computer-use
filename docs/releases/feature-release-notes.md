@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-09-29 | 跨平台分发与 JavaScript 自动化 | Agent 可以通过持久 JavaScript 会话批量编排桌面操作，延迟异步错误不会污染下一次调用；DSH 用户获得一键兼容安装；不使用 npm 或 Homebrew 的用户也可直接下载三端 runtime 和 skill。 | 发布 `0.3.6`：新增 plugin `js` / `js_reset`、`ocu js` / `ocu repl`、DSH 验证式安装，并在 tag CI 完成后统一发布 macOS universal app、Linux / Windows 双架构 CLI、skill、SHA-256 校验和与 manifest。 |
 | 2026-09-24 | macOS 后台操作收敛 | assistant turn 或 MCP/REPL connection 结束时会自动恢复窗口与 occlusion 状态；JS API 可直接传 `windowPlacement` 和 `keyMethod`。 | `restore` 改为按 app 恢复当前 runtime 停放的全部窗口；`get_app_state` 不再错误标为 read-only；私有 `CGVirtualDisplay` API 变化会 fail closed 而不是以 Objective-C exception 终止 host。一次性 CLI 的 park/action/restore 需放在同一个 `call --calls` 中。 |
 | 2026-09-22 | JS REPL CLI | 用户无需先配置 MCP host，也可以直接用 `ocu js` 执行一次性 Computer Use JavaScript，或用 `ocu repl` 在终端中复用持久 binding；Agent 还能先读取结构化 capability 状态。 | npm launcher 新增 positional/stdin/file 三种 `js` 输入、持久 terminal REPL、`capabilities [--json]` 和稳定 help availability；`ocu mcp` 仍保持原生 9-tool surface。 |
 | 2026-09-22 | JS REPL 错误传播与 read-back | `js` 代码抛出的异常立即以 `isError` 返回且保留 bindings，不再等到 30 s 超时并丢弃 session；macOS 上一批 action 不再为每个动作等待 150 ms 并重新读取整棵 AX tree，十次点击从数秒降到约一次 state read。 | REPL adapter 从 Node 的 `handleError`（Node 26）或 domain（Node 22）路径 settle 当前 evaluation；adapter 以 `OPEN_COMPUTER_USE_ACTION_READ_BACK=0` 启动 native runtime，macOS action 在该模式下返回短状态、跳过 settle 与 snapshot；默认 9-tool 行为不变，Linux / Windows 暂时忽略该变量。 |
