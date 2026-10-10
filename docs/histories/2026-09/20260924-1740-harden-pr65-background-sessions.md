@@ -52,3 +52,4 @@
 - `docs/RELIABILITY.md` 同时保留 macOS 后台输入、agent display、session cleanup 排障说明和 Windows screenshot-only failure 排障说明。
 - 合并结果通过 `swift test`（186 tests，7 个 opt-in live tests 跳过）、Node 22 tests、Windows / Linux `go test ./...`、release build、Windows / Linux 制品构建、headless tool/cursor smoke、文档骨架与 action pinning 检查。
 - 未运行会切换窗口、Space 或向真实应用注入输入的 opt-in macOS live tests。
+- 首次推送后 `main` 又前进到 Linux `press_key` keysym 修复；再次同步该提交，合并树无内容冲突，并重新验证最终 head，避免 GitHub mergeability 计算与快速变化的 base 产生竞态。
