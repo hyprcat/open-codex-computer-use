@@ -18,6 +18,7 @@
 - macOS agent display 实机回归（会短暂创建并销毁一块 virtual display）：`OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST=1 swift test --filter AgentDisplayLiveTests`
 - macOS 其他 Desktop 实机回归（需要第二个 Desktop，测试会短暂切换 Space 启动目标）：`OPEN_COMPUTER_USE_RUN_CROSS_SPACE_LIVE_TEST=1 swift test --filter CrossSpaceLiveTests`
 - Linux runtime：`(cd apps/OpenComputerUseLinux && go test ./...)`、`./scripts/build-open-computer-use-linux.sh --arch arm64`
+- Windows runtime：`(cd apps/OpenComputerUseWindows && go test ./...)`、`./scripts/build-open-computer-use-windows.sh --arch amd64`；截图相关变更还要在 Windows 交互桌面验证正常窗口有 image、1x1/minimized/cloaked 窗口无 image。
 - 本地诊断：
   - `open-computer-use doctor`
   - `open-computer-use snapshot <app>`
@@ -45,7 +46,8 @@
 6. 如果只有 `sky_click` 失败，先重新执行 `get_app_state`，确认窗口仍属于同一进程且 app 未被隐藏；错误里出现 `missing SkyLight symbols` 时不要改用隐式 fallback，应按当前 macOS 版本重新验证私有 SPI。被遮挡的 Chromium 页面仍无效果时，再用受控页面区分 renderer 策略变化与坐标/window-local 映射问题。
 7. 如果只想验证仓库基线，直接跑 fixture + smoke，不要先在复杂第三方 app 上排查。
 8. 排查 Linux runtime 时，先确认目标命令是否由桌面用户运行，再用 `open-computer-use call list_apps` 和 `open-computer-use snapshot <app>` 区分 session/env 问题与 AT-SPI tree/action 问题。如果是 Codex MCP，重新执行 `open-computer-use install-codex-mcp` 后重启 Codex，确认配置仍是 `open-computer-use mcp`。
-9. 排查 `ocu js` / `ocu repl` 时先执行 `ocu capabilities --json`。缺少 adapter、kernel 或 native artifact 时重新安装 npm 包；若 shell 报 `node: command not found`，说明 npm launcher 本身尚未启动，需要先安装 Node 或等待未来 native bootstrap 方案。
+9. Windows snapshot 返回 accessibility tree 但没有 image 时，先确认窗口可见、未最小化、未 cloaked、位于 virtual screen 内且不是退化小窗口；无 image 时不要调用 coordinate click / drag，优先使用 `element_index`。
+10. 排查 `ocu js` / `ocu repl` 时先执行 `ocu capabilities --json`。缺少 adapter、kernel 或 native artifact 时重新安装 npm 包；若 shell 报 `node: command not found`，说明 npm launcher 本身尚未启动，需要先安装 Node 或等待未来 native bootstrap 方案。
 
 ## 后续补强方向
 

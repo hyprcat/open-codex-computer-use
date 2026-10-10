@@ -44,3 +44,11 @@
 - `./scripts/run-tool-smoke-tests.sh`：native tool 与 cursor idle smoke 均通过。
 - `./scripts/check-docs.sh`、`./scripts/check-action-pinning.sh` 与 `git diff --check`：通过。
 - 按仓库约束未运行会切换窗口 / Space 或注入真实输入的 opt-in live tests；agent-display live test 已改为覆盖按 PID 恢复入口，留待空闲桌面窗口执行。
+
+### 🔄 2026-10-10 main 同步补充
+
+- 再次把最新 `main` 合入贡献者分支，保留主线新增的 Windows 退化截图 fail-closed 防护，以及 PR 的 `key_method` / `window_placement` 跨平台参数兼容。
+- Windows runtime 同时支持无效 PNG / 过小窗口过滤、无可用截图时拒绝 coordinate action，并继续对 macOS-only 的 `sky_key` 和 agent-display placement 返回明确的 unsupported 结果。
+- `docs/RELIABILITY.md` 同时保留 macOS 后台输入、agent display、session cleanup 排障说明和 Windows screenshot-only failure 排障说明。
+- 合并结果通过 `swift test`（186 tests，7 个 opt-in live tests 跳过）、Node 22 tests、Windows / Linux `go test ./...`、release build、Windows / Linux 制品构建、headless tool/cursor smoke、文档骨架与 action pinning 检查。
+- 未运行会切换窗口、Space 或向真实应用注入输入的 opt-in macOS live tests。
