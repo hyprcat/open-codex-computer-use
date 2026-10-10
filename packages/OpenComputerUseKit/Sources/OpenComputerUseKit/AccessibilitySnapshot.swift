@@ -10,8 +10,6 @@ final class ElementRecord {
     let element: AXUIElement?
     let localFrame: CGRect?
     let role: String?
-    /// Carried for targeted lookups, which return the control's own labels without
-    /// rendering a tree. The snapshot renderer reads labels from the tree instead.
     let title: String?
     let value: String?
     let rawActions: [String]
@@ -99,12 +97,30 @@ public struct SnapshotTextLimit: Equatable, Sendable {
 
 let accessibilityTreeMaxNodeCount = AccessibilityTreeLimits.defaultMaxNodeCount
 let accessibilityTreeMaxDepth = AccessibilityTreeLimits.defaultMaxDepth
-let screenshotCaptureTimeout: TimeInterval = 5
-let screenshotResultMaxPNGBytes = 900_000
 let screenshotResultMaxDimension: CGFloat = 1280
-let screenshotResultMinScale: CGFloat = 0.25
 private let windowVisibilityRecoveryDelay: TimeInterval = 0.7
 private let axWebAreaRole = "AXWebArea"
+// Chrome needs up to ~2s after AXManualAccessibility before the web tree exists.
+private let webAreaRewalkAttempts = 30
+private let webAreaRewalkInterval: TimeInterval = 0.1
+
+/// Layer-0 windows ordered above `windowID` on screen, excluding this process
+/// (the visual cursor overlay must not count as cover).
+func coveringWindowBounds(above windowID: CGWindowID) -> [CGRect] {
+    let infoList = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow, .excludeDesktopElements], windowID) as? [[String: Any]] ?? []
+    let ownPID = ProcessInfo.processInfo.processIdentifier
+    return infoList.compactMap { info in
+        guard
+            let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t, ownerPID != ownPID,
+            let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
+            let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
+            let bounds = CGRect(dictionaryRepresentation: boundsDictionary)
+        else {
+            return nil
+        }
+        return bounds
+    }
+}
 private let axContentsAttribute = "AXContents"
 private let axVisibleChildrenAttribute = "AXVisibleChildren"
 private let compactGenericActionTargetMaxWidth: CGFloat = 240
@@ -116,14 +132,22 @@ public struct AppSnapshot {
     public let windowBounds: CGRect?
     let targetWindowID: CGWindowID?
     let targetWindowLayer: Int?
-    public let screenshotPNGData: Data?
+    public let screenshotData: Data?
+    @available(*, deprecated, message: "Use screenshotData; screenshots may be JPEG")
+    public var screenshotPNGData: Data? {
+        guard let data = screenshotData, data.starts(with: [0x89, 0x50, 0x4e, 0x47]) else { return nil }
+        return data
+    }
     let mode: SnapshotMode
     let treeLines: [String]
     let focusedSummary: String?
     let focusedElement: AXUIElement?
     let selectedText: String?
+    /// The AX window the tree was rendered from (nil for fixture snapshots).
+    let windowElement: AXUIElement?
 
     let elements: [Int: ElementRecord]
+    var screenshotNote: String? = nil
 
     public var renderedText: String {
         renderedText(style: .fullState)
@@ -172,7 +196,8 @@ enum SnapshotBuilder {
         }
 
         let appElement = AXUIElementCreateApplication(app.pid)
-        enableBestEffortAccessibilityModes(appElement)
+        let lazyWebAccessibility = enableBestEffortAccessibilityModes(appElement)
+            || appHasLazyWebAccessibility(bundleURL: app.runningApplication.bundleURL)
         let systemWide = AXUIElementCreateSystemWide()
         var focusedApplication = copyElement(systemWide, attribute: kAXFocusedApplicationAttribute)
         var focusedWindow = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
@@ -190,7 +215,13 @@ enum SnapshotBuilder {
         rootWindow = resolvedFocusedWindow
 
         var windowTitle = stringValue(of: rootWindow, attribute: kAXTitleAttribute)
-        var windowCapture = WindowCapture.resolve(for: app.pid, titleHint: windowTitle)
+        // Bind the AX window to its CGWindowID directly when the SPI allows it, so
+        // the tree, the capture and every element frame refer to the same window;
+        // the title/area heuristics remain the fallback.
+        var windowCapture = TimingLog.measure("snapshot.window_capture") {
+            WindowCapture.resolve(for: app.pid, exactWindowID: SkyLightSPI.shared.windowID(for: rootWindow))
+                ?? WindowCapture.resolve(for: app.pid, titleHint: windowTitle)
+        }
         if windowCapture == nil,
            recoveryPolicy == .allowActivation,
            recoverVisibleWindow(for: app, appElement: appElement, preferredWindow: rootWindow) {
@@ -198,7 +229,8 @@ enum SnapshotBuilder {
             if let recoveredWindow = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide) {
                 rootWindow = recoveredWindow
                 windowTitle = stringValue(of: recoveredWindow, attribute: kAXTitleAttribute)
-                windowCapture = WindowCapture.resolve(for: app.pid, titleHint: windowTitle)
+                windowCapture = WindowCapture.resolve(for: app.pid, exactWindowID: SkyLightSPI.shared.windowID(for: recoveredWindow))
+                    ?? WindowCapture.resolve(for: app.pid, titleHint: windowTitle)
             }
         }
 
@@ -215,7 +247,8 @@ enum SnapshotBuilder {
             focusedApplication: focusedApplication,
             systemWide: systemWide,
             textLimit: textLimit,
-            treeLimits: treeLimits
+            treeLimits: treeLimits,
+            lazyWebAccessibility: lazyWebAccessibility
         )
     }
 
@@ -228,10 +261,12 @@ enum SnapshotBuilder {
         focusedApplication: AXUIElement?,
         systemWide: AXUIElement,
         textLimit: SnapshotTextLimit,
-        treeLimits: AccessibilityTreeLimits
+        treeLimits: AccessibilityTreeLimits,
+        lazyWebAccessibility: Bool
     ) -> AppSnapshot {
         let windowBounds = windowCapture.bounds
-        let screenshotPNGData = windowCapture.pngDataIfAvailable()
+        let screenshot = windowCapture.screenshotResult()
+        let screenshotData = screenshot.data
         let focusedElement = preferredFocusedElement(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
         let selectedText = focusedElement.flatMap { copySelectedText($0, textLimit: textLimit) }
         let context = RenderContext(
@@ -242,11 +277,41 @@ enum SnapshotBuilder {
         )
 
         var renderer = TreeRenderer(context: context)
-        renderer.render(rootElement)
+        TimingLog.measure("snapshot.tree_walk") { renderer.render(rootElement) }
+
+        // Pin the window's visible state (WindowServer occlusion notifications
+        // off) so covering it or moving it to another Space later does not hide
+        // its content. Only possible while it is currently unoccluded.
+        let pinned = WindowOcclusionKeepAlive.shared.keepVisible(windowID: windowCapture.windowID, bounds: windowBounds)
+
+        // Engines that accept AXManualAccessibility build their web tree lazily
+        // and drop it while hidden. Re-walk briefly while the window is visible;
+        // when it is hidden, say so instead of waiting.
+        var occlusionNote: String?
+        if lazyWebAccessibility, !renderer.hasWebArea {
+            if pinned {
+                for _ in 0..<webAreaRewalkAttempts {
+                    Thread.sleep(forTimeInterval: webAreaRewalkInterval)
+                    renderer = TreeRenderer(context: context)
+                    renderer.render(rootElement)
+                    if renderer.hasWebArea {
+                        break
+                    }
+                }
+            } else {
+                occlusionNote = "Note: this window is covered or on another Space, so the app hides its web content and it is not in the tree. Bring the window into view once (covering it afterwards keeps working), or call get_app_state with window_placement=agent_display to park it on the agent's own display."
+            }
+        }
+
         if let menuBar = copyElement(appElement, attribute: kAXMenuBarAttribute),
            !CFEqual(menuBar, rootElement)
         {
             renderer.render(menuBar)
+        }
+
+        var treeLines = renderer.lines
+        if let occlusionNote {
+            treeLines.append(occlusionNote)
         }
 
         return AppSnapshot(
@@ -255,13 +320,15 @@ enum SnapshotBuilder {
             windowBounds: windowBounds,
             targetWindowID: windowCapture.windowID,
             targetWindowLayer: windowCapture.layer,
-            screenshotPNGData: screenshotPNGData,
+            screenshotData: screenshotData,
             mode: .accessibility,
-            treeLines: renderer.lines,
+            treeLines: treeLines,
             focusedSummary: renderer.focusedSummary,
             focusedElement: focusedElement,
             selectedText: selectedText,
-            elements: renderer.records
+            windowElement: rootElement,
+            elements: renderer.records,
+            screenshotNote: screenshot.note
         )
     }
 
@@ -411,23 +478,30 @@ enum SnapshotBuilder {
             windowBounds: state.windowBounds.cgRect,
             targetWindowID: nil,
             targetWindowLayer: nil,
-            screenshotPNGData: nil,
+            screenshotData: nil,
             mode: .fixture,
             treeLines: lines,
             focusedSummary: focusedSummary,
             focusedElement: nil,
             selectedText: nil,
+            windowElement: nil,
             elements: records
         )
     }
 }
 
-private func enableBestEffortAccessibilityModes(_ appElement: AXUIElement) {
+/// Returns `true` when the app accepts `AXManualAccessibility`, i.e. it builds
+/// its (web) accessibility tree lazily on request. Native AppKit apps report
+/// the attribute as unsupported, which is the app-agnostic signal used instead
+/// of bundle-identifier lists.
+@discardableResult
+private func enableBestEffortAccessibilityModes(_ appElement: AXUIElement) -> Bool {
     // Chromium/Electron apps may withhold parts of their AX tree until manual
     // accessibility is enabled. These private attributes are best-effort and
     // harmlessly fail on apps that do not support them.
-    _ = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    let manual = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
     _ = AXUIElementSetAttributeValue(appElement, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    return manual == .success
 }
 
 private struct WindowCapture {
@@ -435,9 +509,9 @@ private struct WindowCapture {
     let layer: Int
     let bounds: CGRect
     let image: CGImage?
+    var imageConfig = ImageCaptureConfig.defaults
 
-    /// Exact binding: geometry for the window the AX tree was walked from.
-    /// `capture: false` reads bounds and layer without taking a picture.
+    /// Exact binding: the window the AX tree was walked from.
     static func resolve(for pid: pid_t, exactWindowID: CGWindowID?, capture: Bool = true) -> WindowCapture? {
         guard let exactWindowID,
               let infoList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]
@@ -454,14 +528,22 @@ private struct WindowCapture {
             else {
                 continue
             }
-            let image = capture ? captureImage(windowID: exactWindowID, bounds: bounds) : nil
-            return WindowCapture(windowID: exactWindowID, layer: layer, bounds: bounds, image: image)
+            let config = ImageCaptureConfig.current
+            return WindowCapture(windowID: exactWindowID, layer: layer, bounds: bounds, image: capture ? captureImage(windowID: exactWindowID, bounds: bounds, config: config) : nil, imageConfig: config)
         }
         return nil
     }
 
     static func resolve(for pid: pid_t, titleHint: String?, capture: Bool = true) -> WindowCapture? {
-        guard let infoList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+        // On-screen windows first (front-to-back order is meaningful there);
+        // fall back to every window of the pid so a window on another Space
+        // still resolves instead of triggering the activate-and-raise recovery.
+        resolve(for: pid, titleHint: titleHint, options: [.optionOnScreenOnly], capture: capture)
+            ?? resolve(for: pid, titleHint: titleHint, options: [.optionAll], capture: capture)
+    }
+
+    private static func resolve(for pid: pid_t, titleHint: String?, options: CGWindowListOption, capture: Bool) -> WindowCapture? {
+        guard let infoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return nil
         }
 
@@ -493,14 +575,24 @@ private struct WindowCapture {
             return nil
         }
 
-        let image = capture ? captureImage(windowID: best.windowID, bounds: best.bounds) : nil
+        let config = ImageCaptureConfig.current
+        let image = capture ? captureImage(windowID: best.windowID, bounds: best.bounds, config: config) : nil
 
-        return WindowCapture(windowID: best.windowID, layer: best.layer, bounds: best.bounds, image: image)
+        return WindowCapture(windowID: best.windowID, layer: best.layer, bounds: best.bounds, image: image, imageConfig: config)
     }
 
-    private static func captureImage(windowID: CGWindowID, bounds: CGRect) -> CGImage? {
-        try? BlockingAsyncBridge.run(timeout: screenshotCaptureTimeout) {
-            let shareableContent = try await SCShareableContent.current
+    /// WindowServer's hardware window capture first (any Space, covered or not,
+    /// ~10-40ms), ScreenCaptureKit when it is unavailable.
+    private static func captureImage(windowID: CGWindowID, bounds: CGRect, config: ImageCaptureConfig) -> CGImage? {
+        if let image = TimingLog.measure("snapshot.capture_hw") { SkyLightSPI.shared.hardwareCaptureWindow(windowID) } {
+            return image
+        }
+        return TimingLog.measure("snapshot.capture_sck") { captureImageWithScreenCaptureKit(windowID: windowID, bounds: bounds, config: config) }
+    }
+
+    private static func captureImageWithScreenCaptureKit(windowID: CGWindowID, bounds: CGRect, config: ImageCaptureConfig) -> CGImage? {
+        try? BlockingAsyncBridge.run(timeout: config.captureTimeout) {
+            let shareableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let window = shareableContent.windows.first(where: { $0.windowID == windowID }) else {
                 return nil
             }
@@ -525,13 +617,11 @@ private struct WindowCapture {
             ?? 1
     }
 
-    func pngDataIfAvailable() -> Data? {
-        guard let image else {
-            return nil
-        }
-
-        return boundedScreenshotPNGData(for: image)
+    func screenshotResult() -> ScreenshotEncodingResult {
+        guard let image else { return ScreenshotEncodingResult(data: nil, note: nil) }
+        return encodeScreenshot(for: image, config: imageConfig)
     }
+
 }
 
 struct WindowCaptureCandidate {
@@ -577,39 +667,55 @@ func preferredWindowCaptureCandidate(_ candidates: [WindowCaptureCandidate], tit
 
 func boundedScreenshotPNGData(
     for image: CGImage,
-    maxBytes: Int = screenshotResultMaxPNGBytes,
-    maxDimension: CGFloat = screenshotResultMaxDimension,
-    minScale: CGFloat = screenshotResultMinScale
+    maxDimension: CGFloat = screenshotResultMaxDimension
 ) -> Data? {
-    guard image.width > 0, image.height > 0, maxBytes > 0 else {
-        return nil
+    boundedScreenshotData(for: image, config: ImageCaptureConfig(
+        discardBelowPixelCount: 0, maxDimension: maxDimension
+    ))
+}
+
+struct ScreenshotEncodingResult {
+    let data: Data?
+    let note: String?
+}
+
+func boundedScreenshotData(for image: CGImage, config: ImageCaptureConfig) -> Data? {
+    encodeScreenshot(for: image, config: config).data
+}
+
+func encodeScreenshot(for image: CGImage, config: ImageCaptureConfig) -> ScreenshotEncodingResult {
+    func omitted(_ reason: String) -> ScreenshotEncodingResult { .init(data: nil, note: "Screenshot omitted: " + reason) }
+    guard image.width > 0, image.height > 0 else { return omitted("invalid dimensions") }
+    guard config.maxDimension.map({ $0.isFinite && $0 >= 1 && $0.rounded(.down) == $0 }) ?? true else {
+        return omitted("invalid image configuration")
     }
-
-    let original = pngData(for: image)
-    let largestDimension = CGFloat(max(image.width, image.height))
-    var scale = min(1, maxDimension / largestDimension)
-
-    if scale >= 1, let original, original.count <= maxBytes {
-        return original
+    func isTiny(_ width: Int, _ height: Int) -> Bool {
+        Double(width) * Double(height) < Double(config.discardBelowPixelCount)
     }
-
-    var best = original
-    while scale >= minScale {
-        guard let resized = resizedCGImage(image, scale: scale),
-              let data = pngData(for: resized)
-        else {
-            break
+    if isTiny(image.width, image.height) {
+        return omitted("\(image.width)×\(image.height) has fewer than \(config.discardBelowPixelCount) pixels")
+    }
+    let longEdge = CGFloat(max(image.width, image.height))
+    if let maximum = config.maxDimension, longEdge > maximum, !config.scaleDownAfterMaxSize {
+        return omitted("long edge \(Int(longEdge)) exceeds maxLongEdgePixels \(Int(maximum)); scaleDownAfterMaxSize is false")
+    }
+    func encode(_ image: CGImage) -> Data? {
+        switch config.format {
+        case "png": return pngData(for: image)
+        case "webp": return losslessWebPData(for: image)
+        case "jpg", "jpeg": return NSBitmapImageRep(cgImage: image).representation(using: .jpeg, properties: [.compressionFactor: config.jpegQuality])
+        default: return nil
         }
-
-        best = data
-        if data.count <= maxBytes {
-            return data
-        }
-
-        scale *= 0.85
     }
-
-    return best
+    let scale = min(1, (config.maxDimension ?? longEdge) / longEdge)
+    let width = max(1, Int((CGFloat(image.width) * scale).rounded(.down)))
+    let height = max(1, Int((CGFloat(image.height) * scale).rounded(.down)))
+    if isTiny(width, height) {
+        return omitted("resizing would fall below discardBelowPixelCount \(config.discardBelowPixelCount)")
+    }
+    guard let resized = scale == 1 ? image : resizedCGImage(image, scale: scale),
+          let data = encode(resized) else { return omitted("\(config.format) encoding failed") }
+    return .init(data: data, note: nil)
 }
 
 private func pngData(for image: CGImage) -> Data? {
@@ -618,8 +724,8 @@ private func pngData(for image: CGImage) -> Data? {
 }
 
 private func resizedCGImage(_ image: CGImage, scale: CGFloat) -> CGImage? {
-    let width = max(1, Int((CGFloat(image.width) * scale).rounded()))
-    let height = max(1, Int((CGFloat(image.height) * scale).rounded()))
+    let width = max(1, Int((CGFloat(image.width) * scale).rounded(.down)))
+    let height = max(1, Int((CGFloat(image.height) * scale).rounded(.down)))
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
 
@@ -701,6 +807,7 @@ private struct RenderContext {
 
 private struct TreeRenderer {
     let context: RenderContext
+    var hasWebArea = false
     var nextIndex = 0
     var lines: [String] = []
     var records: [Int: ElementRecord] = [:]
@@ -724,6 +831,9 @@ private struct TreeRenderer {
         let index = nextIndex
 
         let role = stringValue(of: root, attribute: kAXRoleAttribute) ?? "AXUnknown"
+        if role == axWebAreaRole {
+            hasWebArea = true
+        }
         let subrole = stringValue(of: root, attribute: kAXSubroleAttribute)
         let baseRoleText = roleDescription(of: root, role: role, subrole: subrole)
         let label = stringValue(of: root, attribute: kAXDescriptionAttribute)

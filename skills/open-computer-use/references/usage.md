@@ -41,6 +41,47 @@ press_key
 set_value
 ```
 
+This remains the native compatibility surface. The bundled Codex plugin uses a
+code-first adapter instead and advertises only `js` and `js_reset`. In that
+surface, bind an app and compose actions with asynchronous JavaScript:
+
+```js
+var app = await cua.getApp("TextEdit");
+await app.typeText("Hello");
+await app.getAXState();
+```
+
+The code-first surface also forwards macOS background-operation options:
+
+```js
+var chrome = await cua.getApp("Google Chrome");
+await chrome.getAXState({ windowPlacement: "agent_display" });
+await chrome.typeText("hello", { keyMethod: "sky_key" });
+await chrome.pressKey("cmd+a", { keyMethod: "sky_key" });
+await chrome.getAXState({ windowPlacement: "restore" });
+```
+
+Bindings persist across `js` calls until `js_reset`. See
+`docs/references/js-repl.md` for the full API and security boundary.
+
+The npm CLI can use the same code-first runtime without an MCP host:
+
+```sh
+ocu capabilities
+ocu js 'var apps = await cua.listApps({ emit: false }); nodeRepl.write(apps)'
+printf '%s' 'nodeRepl.write(6 * 7)' | ocu js -
+ocu js --file ./automation.mjs
+ocu repl
+```
+
+`ocu js` owns one short-lived Worker/native MCP session. `ocu repl` keeps the
+session and top-level bindings for the current terminal until `.exit`, Ctrl-D,
+or termination; `.editor` / `.end` accepts multiline input and `.reset`
+discards JavaScript bindings. Use `nodeRepl.write(value)` for explicit output.
+The native `ocu mcp` surface remains the nine tools listed above. Run
+`ocu capabilities --json` to inspect component availability instead of
+inferring support from a command being present in help.
+
 ## Direct CLI Tool Calls
 
 Use `call` for one-off checks:
@@ -146,6 +187,34 @@ Keep the environment override scoped as narrowly as possible. While it remains e
 
 Windows returns an unsupported error for `sky_click` and `global`; Linux returns an unsupported error for `app_post` and `sky_click`. An unsupported or failed explicit method does not fall back to `auto`.
 
+## Choosing a Keyboard Method
+
+`key_method` on `type_text` and `press_key` is optional. Omitting it uses `auto`, which keeps the existing accessibility-first typing and app-posted key events. Explicit methods never fall back:
+
+- `sky_key`: use the macOS private SkyLight background-window path. It makes the current target window the key window inside its own app (without raising it, moving the pointer, switching Spaces, or deactivating the foreground app), delivers the keys, and releases that state again. Command chords such as `cmd+a`, `cmd+c` or `cmd+v` are performed through the target's own menu bar. Supported on macOS only.
+
+Use `sky_key` when a Chromium or Electron window is covered by another window or lives on another Space and `auto` typing does not reach it:
+
+```sh
+open-computer-use call get_app_state --args '{"app":"Google Chrome"}'
+open-computer-use call click --args '{"app":"Google Chrome","x":420,"y":260,"click_method":"sky_click"}'
+open-computer-use call type_text --args '{"app":"Google Chrome","text":"hello","key_method":"sky_key"}'
+open-computer-use call press_key --args '{"app":"Google Chrome","key":"cmd+a","key_method":"sky_key"}'
+```
+
+Covered windows and windows on other Spaces: `get_app_state` never activates or raises a window that is off-screen, and it pins the visibility of every window it captures while that window is unoccluded, so covering it or switching Spaces afterwards keeps Chromium/Electron content in the tree and screenshots live. If the tree ends with a note that the window is covered, the app had already hidden its content before the first snapshot. Either bring the window into view once and snapshot again, or park it on the agent's own invisible display:
+
+```sh
+open-computer-use call --calls '[
+  {"tool":"get_app_state","args":{"app":"Google Chrome","window_placement":"agent_display"}},
+  {"tool":"get_app_state","args":{"app":"Google Chrome","window_placement":"restore"}}
+]'
+```
+
+`agent_display` moves the window's frame onto a virtual display the user never sees (macOS only): the app renders it, exposes its full tree and accepts `sky_click` / `sky_key`, while the user's Space, focus and pointer stay untouched. The window is gone from the user's desktop until `restore`, the assistant turn ends, the MCP/REPL connection closes, or the runtime exits, so treat it as a deliberate, temporary step. `restore` restores every window parked by the runtime for that app. Keep park/action/restore calls in one `js`, REPL, MCP, or `call --calls` session; a one-shot CLI connection restores its background state when it closes. `sky_click` and `sky_key` accept covered and other-Space windows.
+
+`sky_key` types into whatever element the target window has focused, so click or AX-focus the field first. It fails closed for hidden apps (`cmd+h`), stale window ids, and missing private symbols; Windows and Linux return an unsupported error.
+
 ## Drag Delivery
 
 `drag` has no method parameter. On macOS the path it takes is decided by the same process-level gate that authorizes `click_method: "global"`:
@@ -161,7 +230,7 @@ When the gate is not enabled, treat window-server drags as unavailable and reach
 
 ### macOS
 
-The macOS runtime uses Accessibility, ScreenCaptureKit, app-posted input events, and an explicit private-SkyLight `sky_click` route. It normally avoids moving the user's real pointer. The visual cursor overlay is part of the Open Computer Use experience and can be disabled by the surrounding runtime only when needed. Private SkyLight symbols and raw event fields are not API-stable; re-validate `sky_click` after macOS upgrades.
+The macOS runtime uses Accessibility, ScreenCaptureKit, app-posted input events, and explicit private-SkyLight `sky_click` / `sky_key` routes. It normally avoids moving the user's real pointer. The visual cursor overlay is part of the Open Computer Use experience and can be disabled by the surrounding runtime only when needed. Private SkyLight symbols and raw event fields are not API-stable; re-validate `sky_click` after macOS upgrades.
 
 ### Windows
 
@@ -174,3 +243,7 @@ The Linux runtime uses AT-SPI2 through the desktop session bus. It must run in a
 ## Safety
 
 Pause and ask the user before actions that affect external systems or sensitive local state, including sending messages, submitting forms, deleting files, approving prompts, uploading files, or interacting with password managers.
+
+## Persisted screenshot settings
+
+Use `ocu config` to inspect effective values and their sources. `ocu config set image.format jpg` or `ocu config set image.maxLongEdgePixels 1024` persists macOS screenshot preferences in the user config file. ENV overrides take precedence; `ocu config reset KEY` removes a saved preference. Windows/Linux screenshot behavior is unchanged.

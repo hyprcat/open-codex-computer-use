@@ -3,13 +3,16 @@
 ## 当前实现边界
 
 - 对 MCP host 暴露的接口仍是本地 `stdio`；macOS CLI 与 `.app` app agent 之间会使用用户临时目录下的 Unix domain socket，socket 创建后会收紧为当前用户读写，且不对外监听 TCP/HTTP 端口。未设置 `OPEN_COMPUTER_USE_AGENT_SOCKET_NAMESPACE` 时继续使用历史 Socket；设置后仅以 namespace 摘要派生私有文件名，不把宿主目录或原始 namespace 写入 Socket 路径。
+- Codex plugin 默认把一个本地 Node.js REPL 放在 native MCP 前面，npm CLI 的 `ocu js` / `ocu repl` 也直接使用同一 runtime。`js` 是任意本地 JavaScript 执行能力，不是受限表达式语言：代码可按启动进程权限读取文件、环境、模块和网络。只应在 host 已经具备并允许 model-code execution 的信任边界内启用；不接受这条边界的 host 应继续直连 `open-computer-use mcp` 的离散 native tools。
+- REPL 里的 Computer Use 调用仍经过 native MCP，因此密码管理器 denylist、`OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS` 等 native safety gate 不会被 JavaScript adapter 绕过。JS kernel 在 Worker 中运行，超时会终止整个 Worker 并清空 bindings。
 - 所有动作都必须显式带 `app` 参数；当前不会在后台自动扫描并控制任意 app。
 - macOS 真实 app 路径依赖 `Open Computer Use.app` 已获得 `Accessibility` 与 `Screen Recording` 权限；终端里的 CLI / Node launcher 会把 `mcp`、`doctor`、`call`、`snapshot` 和 `list-apps` 转发给由 LaunchServices 启动的本地 app agent，避免把权限要求落到 iTerm / Terminal 身上。
 - 实验性 Linux runtime 依赖已登录桌面用户的 AT-SPI2 / D-Bus session；coordinate mouse、drag、keyboard synthesis 只是 best-effort fallback，不应被视为跨 Wayland compositor 的通用后台输入授权。
 
 ## 数据处理
 
-- 普通 app 的 screenshot 默认只在内存中编码成 PNG，并通过 MCP `image` content block 直接回传；默认不长期持久化。
+- 普通 app 的 screenshot 默认只在内存中编码成 PNG（可配置为 JPG 或无损 WebP），并通过 MCP `image` content block 直接回传；默认不长期持久化。
+- Windows runtime 对隐藏、最小化、DWM cloaked、离屏或退化小窗口 fail closed：保留可读的 UI Automation tree，但不返回 image block，也不允许在缺少有效截图时执行 coordinate click / drag；不会用放大、补边或占位图伪造可用截图。
 - Linux runtime 的 screenshot 是 best-effort；如果 GNOME Wayland 返回黑图，bridge 会省略 image block，避免把无效截图误当成真实画面。
 - fixture app 的合成状态只写到本地临时 JSON 文件，目的是支撑 deterministic smoke test；当前写入走原子替换，减少测试期间的读写竞争。
 - 当前仓库不引入第三方服务，也不上传截图、AX tree 或输入内容。
@@ -30,7 +33,10 @@
 - `click_method=global` 是显式的系统级指针路径，可能移动真实鼠标、改变前台焦点或命中坐标处的其他窗口。调用参数本身不视为足够授权；macOS 和支持该模式的 Linux runtime 还要求进程环境中设置 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1`。未设置时必须在任何可见 cursor 移动或真实输入事件之前拒绝请求。
 - `click_method=app_post`、`sky_click` 与 `accessibility` 不允许静默切换到 `global`。这保证调用方选择的非侵入边界在失败时仍然成立。
 - `click_method=sky_click` 是显式 macOS 私有 SPI 能力，不进入 `auto`。它不移动系统指针、不改变 WindowServer frontmost app，也不 raise 或切换目标窗口；内部只让目标应用短暂进入 synthetic-active 状态，绝不向真实前台应用发送 defocus record，renderer settle 后也只撤销目标的合成状态。点击后的 action-result snapshot 禁止 activate / `AXRaise` 恢复。它仍会向指定 PID/window 注入真实输入语义，因此只允许使用当前 snapshot 的 on-screen、同 PID 窗口，并在窗口身份不匹配、target-focus record 失败或私有符号缺失时 fail closed。第一版仅支持同一 Space 内的左键单击/双击。
-- SkyLight ABI、raw event field 和 Chromium 接收行为都不受 Apple 公共兼容性承诺保护。系统升级后的失败不得触发静默 global fallback；应先重新验证符号和受控目标，再决定是否更新实现。
+- `key_method=sky_key` 与 `sky_click` 共用同一套边界：显式 macOS 私有 SPI 能力，不进入 `auto`，失败不 fallback；只让目标 app 短暂进入 synthetic-active 并把目标窗口设为其进程内的 key window，绝不向真实前台应用发送任何 record，不移动指针，不 raise，不切 Space。它会向目标 PID 注入真实键盘语义，并可能通过 AX 按下目标菜单项（例如 `cmd+q` 就会退出目标 app），所以只允许当前 snapshot 的同 PID 窗口，隐藏 app 与私有符号缺失时 fail closed。
+- `get_app_state` 的 occlusion keep-alive 会关闭目标窗口的 WindowServer occlusion 通知，让 app 在被遮挡时继续渲染和暴露内容。因此 macOS 工具定义不把它声明为 read-only，即使默认 `keep` 不移动窗口。它不改变窗口可见性、层级、Space 或焦点，只作用于当前 snapshot 的窗口；运行时保存原始通知状态，并在 turn-ended、MCP/REPL connection 关闭、server 正常关闭或进程退出时恢复，失败项保留以便重试。副作用是 session 内被遮挡的窗口会继续消耗渲染资源；无法捕获的强制终止仍不具备进程内清理机会。
+- `window_placement=agent_display` 是唯一会改变用户可见状态的显式模式：它创建一个用户看不到的 virtual display（显示器排列会多出一块，鼠标可能滑入），并把目标窗口移到那里，窗口在停靠期间不在用户桌面上。它不激活、不抬升、不切换 Space、不移动指针；显式 `restore` 会恢复该 app 在当前 runtime 中停放的全部窗口，turn-ended、MCP/REPL connection 关闭、server 正常关闭或进程退出也会恢复全部窗口并销毁显示器。恢复无法确认时保留记录和显示器以便重试，不会把失败误报成成功；无法捕获的强制终止仍不具备进程内清理机会。默认 `keep` 不做窗口移动，Windows / Linux 拒绝非 `keep` 值。
+- SkyLight ABI、raw event field、`CGVirtualDisplay` KVC/selector surface 和 Chromium 接收行为都不受 Apple 公共兼容性承诺保护。系统升级后的私有 virtual-display 调用异常会被 shim 捕获并按 capability unavailable 失败；其他私有能力失败也不得触发静默 global fallback。应先重新验证符号和受控目标，再决定是否更新实现。
 - 下一阶段应优先补：
   - session 级审批
   - 更清楚的敏感 app / 系统设置防护策略
