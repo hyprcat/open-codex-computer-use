@@ -498,12 +498,11 @@ public final class ComputerUseService {
     private struct TargetedElement {
         let record: ElementRecord
         let context: TargetedAX.WindowContext
+        let criteria: TargetedAX.Criteria
     }
-    private var targetedElements: [Int: TargetedElement] = [:]
-    private var targetedElementOrder: [Int] = []
-    private var targetedIndexCounter = ComputerUseService.targetedIndexBase
-    static let targetedIndexBase = 1_000_000
-    private static let maxTargetedElements = 5000
+    private let targetedElements = TargetedElementRegistry<TargetedElement>()
+
+    public func clearQueryIndexes() { targetedElements.clear() }
 
     public init() {}
 
@@ -967,41 +966,24 @@ public final class ComputerUseService {
         limit: Int = 20,
         maxNodes: Int = 500,
         windowID: CGWindowID? = nil
-    ) throws -> [[String: Any]] {
-        guard (text.map { !$0.isEmpty } ?? false) || (role.map { !$0.isEmpty } ?? false) else {
+    ) throws -> [String: Any] {
+        guard (text.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false) || (role.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false) else {
             throw ComputerUseError.invalidArguments("query requires at least one of text or role")
         }
 
-        // Read-only against a running app: resolution matches an existing process, and
-        // the window lookup below never activates or raises. An app that is not running
-        // yet is still launched, which brings it forward as any launch does.
-        let app = try AppDiscovery.resolve(query)
+        guard text.map({ $0.utf16.count <= 1000 }) ?? true, role.map({ $0.utf16.count <= 1000 }) ?? true else {
+            throw ComputerUseError.invalidArguments("query text and role must be at most 1000 UTF-16 code units")
+        }
+        let app = try AppDiscovery.resolveRunning(query)
         let context = try SnapshotBuilder.resolveTargetWindow(for: app, windowID: windowID)
-        var criteria = TargetedAX.Criteria(text: text, exact: exact, role: role, limit: limit, maxNodes: maxNodes)
-        var result = SnapshotBuilder.targetedSearch(criteria, in: context)
-        var forgiven = false
-        // A label that differs by a word is the common exact miss, so retry it as a
-        // substring and say so, rather than reporting the control as absent.
-        if exact, result.records.isEmpty, !result.capped {
-            criteria.exact = false
-            result = SnapshotBuilder.targetedSearch(criteria, in: context)
-            forgiven = !result.records.isEmpty
-        }
-
-        // Only fail when the cap stopped the walk with nothing found — that is the
-        // case where an empty result would be misleading. Matches found under a
-        // truncated walk are still matches.
-        if result.capped, result.records.isEmpty {
-            throw ComputerUseError.stateUnavailable(
-                "query hit the max_nodes cap (\(maxNodes)) before finding any match. Raise max_nodes or narrow the query (add a role or more specific text)."
-            )
-        }
-
-        return result.records.map { record in
-            var registered = registerTargetedElement(record: record, context: context)
-            if forgiven { registered["match"] = "contains" }
-            return registered
-        }
+        let criteria = TargetedAX.Criteria(text: text, exact: exact, role: role,
+                                          limit: min(100, max(1, limit)), maxNodes: min(5000, max(1, maxNodes)))
+        let result = try SnapshotBuilder.targetedSearch(criteria, in: context)
+        let matches = result.records.map { registerTargetedElement(record: $0, context: context, criteria: criteria) }
+        return ["matches": matches, "truncated": result.truncated,
+                "stop_reason": result.stopReason ?? "complete", "visited_nodes": result.visitedNodes,
+                "window_id": context.windowID.map { Int($0) } ?? 0,
+                "max_nodes": criteria.maxNodes, "limit": criteria.limit]
     }
 
     /// A snapshot carrying real window context but no rendered tree or screenshot,
@@ -1028,34 +1010,28 @@ public final class ComputerUseService {
     /// that control's own window context with no snapshot; any other index uses
     /// the normal current snapshot.
     private func snapshotForAction(app query: String, elementIndex: String?) throws -> AppSnapshot {
-        if let elementIndex, let index = Int(elementIndex), let target = targetedElements[index] {
-            let (context, record) = SnapshotBuilder.currentGeometry(of: target.record, in: target.context)
-            return liteSnapshot(context: context, elements: [index: record])
+        if let elementIndex, let index = Int(elementIndex), index > TargetedElementRegistry<TargetedElement>.indexBase {
+            let app = try AppDiscovery.resolveRunning(query)
+            let target = try targetedElements.resolve(index, app: TargetedAppIdentity(app: app))
+            do {
+                let (context, record) = try SnapshotBuilder.currentGeometry(of: target.record, in: target.context, criteria: target.criteria)
+                return liteSnapshot(context: context, elements: [index: record])
+            } catch {
+                targetedElements.remove(index)
+                throw error
+            }
         }
         return try currentSnapshot(for: query)
     }
 
-    private func registerTargetedElement(record source: ElementRecord, context: TargetedAX.WindowContext) -> [String: Any] {
-        targetedIndexCounter += 1
-        let index = targetedIndexCounter
-        // Re-key the record to its assigned public index so later lookups match.
-        let record = ElementRecord(
-            index: index,
-            identifier: source.identifier,
-            element: source.element,
-            localFrame: source.localFrame,
-            role: source.role,
-            title: source.title,
-            value: source.value,
-            rawActions: source.rawActions,
-            prettyActions: source.prettyActions,
-            isSyntheticText: source.isSyntheticText
-        )
-        targetedElements[index] = TargetedElement(record: record, context: context)
-        targetedElementOrder.append(index)
-        if targetedElementOrder.count > Self.maxTargetedElements {
-            let evicted = targetedElementOrder.removeFirst()
-            targetedElements[evicted] = nil
+    private func registerTargetedElement(record source: ElementRecord, context: TargetedAX.WindowContext,
+                                         criteria: TargetedAX.Criteria) -> [String: Any] {
+        var record: ElementRecord!
+        _ = targetedElements.insert(app: TargetedAppIdentity(app: context.app)) { index in
+            record = ElementRecord(index: index, identifier: source.identifier, element: source.element,
+                                   localFrame: source.localFrame, role: source.role, title: source.title, value: source.value,
+                                   rawActions: source.rawActions, prettyActions: source.prettyActions, isSyntheticText: source.isSyntheticText)
+            return TargetedElement(record: record, context: context, criteria: criteria)
         }
         return compactRecordDictionary(record)
     }

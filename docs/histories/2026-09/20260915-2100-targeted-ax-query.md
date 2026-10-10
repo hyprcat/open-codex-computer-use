@@ -39,3 +39,15 @@
 - `docs/ARCHITECTURE.md`
 - `skills/open-computer-use/SKILL.md`
 - `skills/open-computer-use/references/usage.md`
+
+## 2026-10-10：PR #73 评审后的补充提交
+
+用户要求按当前主线统一处理评审问题，补充 commits 到原 PR。保留作者原提交，合入 main 的截图配置、hardware/SCK 捕获、后台输入和 agent-display 行为。
+
+- 查询改为单一有界 BFS，限制节点、队列、子节点分页、字符串和 AX 等待时间。返回结构化完整性元数据；精确匹配不再自动改成子串。长字段保留额外边界字符，避免截断制造假精确匹配。
+- 严格验证 query 参数，非法 window_id 返回工具错误，避免浮点转 UInt32 崩溃。只解析已运行应用。
+- 索引绑定进程身份和窗口，增加 120 秒有效期和会话结束清理。操作前验证控件归属、查询条件和最新位置，拒绝失效目标与旧坐标。
+- JS 增加 `app.query()` 与 `getApp(..., { initialState: false })`，默认绑定行为不变。补齐中英文查询文档、README 入口、skill 使用说明及架构和发布记录。
+- 新增 registry、预算、循环、错误、超时、参数校验和持久 JS 查询后操作回归。Swift 207 项测试通过（7 项跳过）；Node 测试及文档检查见完成计划。没有安装或重启 app，也未执行真实桌面交互；实际 AX 延迟仍需在真实应用中验证。
+
+主要新增文件为 `TargetedQuery.swift`、`TargetedQuerySafetyTests.swift`、`docs/targeted-query.md` 和 `docs/targeted-query.zh-CN.md`。原记录中的 native predicate 优先路径和 exact 自动兜底描述为初始实现，已由本节方案替代。

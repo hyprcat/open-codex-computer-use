@@ -70,20 +70,20 @@ public enum ToolDefinitions {
         ),
         ToolDefinition(
             name: "query",
-            description: "Targeted accessibility lookup: find controls in the app's current window using the app's own accessibility search, with no full snapshot and no screenshot. Returns matching controls, each with an `index` usable by the element actions (click, set_value, scroll, perform_secondary_action). Requires text and/or role. This tool is part of plugin `Computer Use`.",
+            description: "Targeted accessibility lookup: find controls in the app's current window using bounded AX traversal, with no full snapshot and no screenshot. Returns matches with truncated, stop_reason, visited_nodes and window_id metadata. Each match has a session-local `index` usable by the element actions (click, set_value, scroll, perform_secondary_action). Requires text and/or role. Only queries already-running apps; indexes expire after 120 seconds. This tool is part of plugin `Computer Use`.",
             annotations: readOnlyAnnotations(),
             inputSchema: objectSchema(
                 properties: [
                     "app": stringProperty(description: "App name or bundle identifier"),
-                    "text": stringProperty(description: "Match text in the control's title, description or value. Case-insensitive substring unless exact is true."),
+                    "text": stringProperty(description: "Match text in the control's title, description or value (up to 1000 UTF-16 code units). Case-insensitive substring unless exact is true. Long fields are bounded and reported as truncated."),
                     "role": stringProperty(description: "Match this accessibility role (the AX prefix is optional, e.g. button or AXButton)"),
                     "exact": [
                         "type": "boolean",
-                        "description": "Require a complete text match instead of a substring. Defaults to false. An exact miss is retried as a substring, and those matches are marked `match: \"contains\"`.",
+                        "description": "Require a complete text match instead of a substring. Defaults to false. No substring retry.",
                     ],
-                    "limit": positiveIntegerProperty(description: "Maximum matches to return. Defaults to 20."),
-                    "max_nodes": positiveIntegerProperty(description: "Node cap for the fallback traversal when the app has no native search. Defaults to 500."),
-                    "window_id": numberProperty(description: "Search this specific window (CGWindowID) instead of the app's current window."),
+                    "limit": positiveIntegerProperty(description: "Maximum matches to return. Defaults to 20; capped at 100."),
+                    "max_nodes": positiveIntegerProperty(description: "Node/queue cap for AX traversal. Defaults to 500; capped at 5000. Search has a 2-second cooperative deadline."),
+                    "window_id": positiveIntegerProperty(description: "Search this specific window (CGWindowID, 1–4294967295) instead of the app's current window."),
                 ],
                 required: ["app"]
             )

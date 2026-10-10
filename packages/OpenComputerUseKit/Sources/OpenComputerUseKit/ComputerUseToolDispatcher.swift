@@ -51,14 +51,14 @@ public final class ComputerUseToolDispatcher {
         case "query":
             let matches = try service.query(
                 app: requireString("app", in: arguments),
-                text: optionalString("text", in: arguments),
-                role: optionalString("role", in: arguments),
-                exact: optionalBool("exact", in: arguments) ?? false,
+                text: try validatedQueryString(arguments["text"], key: "text"),
+                role: try validatedQueryString(arguments["role"], key: "role"),
+                exact: try validatedQueryExact(arguments["exact"]),
                 limit: try optionalPositiveInt("limit", in: arguments) ?? 20,
                 maxNodes: try optionalPositiveInt("max_nodes", in: arguments) ?? 500,
-                windowID: optionalDouble("window_id", in: arguments).map { CGWindowID($0) }
+                windowID: try validatedQueryWindowID(arguments["window_id"])
             )
-            return .text(renderedQueryMatches(matches))
+            return .text(try renderedQueryMatches(matches))
         case "get_app_state":
             return try service.getAppState(
                 app: requireString("app", in: arguments),
@@ -154,14 +154,11 @@ public final class ComputerUseToolDispatcher {
         }
     }
 
-    /// Matches as JSON, so a caller can read them without parsing prose. An empty
-    /// result is `[]`, which is a finding — the control is not on screen.
-    private func renderedQueryMatches(_ matches: [[String: Any]]) -> String {
-        guard
-            let data = try? JSONSerialization.data(withJSONObject: matches, options: [.sortedKeys, .prettyPrinted]),
-            let text = String(data: data, encoding: .utf8)
-        else {
-            return "[]"
+    /// Machine-readable matches with explicit completeness metadata.
+    private func renderedQueryMatches(_ matches: [String: Any]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: matches, options: [.sortedKeys])
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw ComputerUseError.stateUnavailable("Query response could not be encoded")
         }
         return text
     }
@@ -439,4 +436,30 @@ private func decodeOpenComputerUseJSONObject(_ source: String) throws -> Any {
             helpCommand: "call"
         )
     }
+}
+
+func validatedQueryWindowID(_ value: Any?) throws -> CGWindowID? {
+    guard let value else { return nil }
+    guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+          number.doubleValue.isFinite, number.doubleValue >= 1,
+          number.doubleValue <= Double(UInt32.max), number.doubleValue.rounded(.down) == number.doubleValue else {
+        throw ComputerUseError.invalidArguments("window_id must be an integer from 1 to \(UInt32.max)")
+    }
+    return CGWindowID(number.doubleValue)
+}
+
+func validatedQueryString(_ value: Any?, key: String) throws -> String? {
+    guard let value else { return nil }
+    guard let string = value as? String, string.utf16.count <= 1000 else {
+        throw ComputerUseError.invalidArguments("\(key) must be a string of at most 1000 UTF-16 code units")
+    }
+    return string
+}
+
+func validatedQueryExact(_ value: Any?) throws -> Bool {
+    guard let value else { return false }
+    guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+        throw ComputerUseError.invalidArguments("exact must be true or false")
+    }
+    return number.boolValue
 }

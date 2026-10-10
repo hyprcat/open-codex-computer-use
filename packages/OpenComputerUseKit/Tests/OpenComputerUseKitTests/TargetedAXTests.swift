@@ -2,7 +2,7 @@ import XCTest
 @testable import OpenComputerUseKit
 
 /// Pure record-filter tests for the targeted lookup. The native AX search and
-/// window resolution need a live desktop (covered by the live suites); the
+/// window resolution need separate live desktop validation; the
 /// criteria matching is pure string logic and verified here.
 final class TargetedAXTests: XCTestCase {
     private func criteria(
