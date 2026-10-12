@@ -51,3 +51,7 @@
 - 新增 registry、预算、循环、错误、超时、参数校验和持久 JS 查询后操作回归。Swift 207 项测试通过（7 项跳过）；Node 测试及文档检查见完成计划。没有安装或重启 app，也未执行真实桌面交互；实际 AX 延迟仍需在真实应用中验证。
 
 主要新增文件为 `TargetedQuery.swift`、`TargetedQuerySafetyTests.swift`、`docs/targeted-query.md` 和 `docs/targeted-query.zh-CN.md`。原记录中的 native predicate 优先路径和 exact 自动兜底描述为初始实现，已由本节方案替代。
+
+## 2026-10-12：同步 main，解决文档冲突
+
+用户反馈 PR #73 再次出现冲突。原因是主线新增 `doctor --json`，与定向查询在 README 和架构文档相邻位置发生冲突。合入主线提交，保留结构化权限查询与定向 AX 查询两份说明；query 实现不变。代码与测试自动合并，重新验证：Swift 208 项测试（7 项跳过）、Node 33 项测试、`make check-docs` 和 whitespace 检查通过。提交推送到原贡献者分支。

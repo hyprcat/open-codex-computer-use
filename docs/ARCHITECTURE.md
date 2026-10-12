@@ -181,3 +181,7 @@ macOS screenshot 在每轮捕获读取用户 JSON 配置，优先级为 ENV > �
 macOS 在原有 9 个工具之外新增 `query`，按文字或角色查找目标窗口的 AX 元素，不截图、不渲染完整树。Windows/Linux 保持原来的 9 个工具。查询只解析已运行的应用，使用有界 BFS（默认 500 个节点、最多 5000 个，2 秒协作式遍历截止时间），返回匹配项和完整性元数据。字符串和子节点分页同样有界，AX 读取错误会标记结果不完整。
 
 查询索引属于当前 native 会话，最多保留 5000 个、120 秒过期，结束会话时清理且永不复用。元素操作前核对进程身份、窗口归属、查询条件和最新几何；任何验证失败都要求重新查询，不使用旧坐标。JS `cua.getApp(name, { initialState: false })` 可跳过初始快照，`app.query()` 返回结构化结果。详见[查询说明](targeted-query.zh-CN.md)。
+
+## 结构化权限查询
+
+macOS `doctor --json` 在 CLI 和 app-agent proxy 路径复用 `PermissionDiagnostics`，只输出一份 JSON 快照，不打开 onboarding。字段为 `platform: "macos"`、`accessibilityTrusted`、`screenCaptureGranted`、`allGranted` 和 `missingPermissions`（`accessibility` / `screenRecording`）。缺权限仍退出 0，宿主应读取 `allGranted` 并重新查询授权变化。此状态延续系统 API/TCC 合并诊断语义，并非操作成功证明；Linux/Windows 明确拒绝该权限查询模式。普通 `doctor` 保留文本输出与权限引导。
