@@ -125,10 +125,27 @@ open-computer-use install-gemini-mcp --scope user
 # Install into opencode by writing to ~/.config/opencode/opencode.json (or the active config file)
 open-computer-use install-opencode-mcp
 
+# Install through DeepSeek Harness's generic MCP compatibility path:
+# verifies the server, then writes a profile patch, turn-boundary hook, and skill
+open-computer-use install-dsh-mcp
+./scripts/install-dsh-mcp.sh --profile web --no-hook
+
 # Call a single Computer Use tool and print the MCP-style JSON result
 open-computer-use call list_apps
 ocu call list_apps
 open-computer-use call get_app_state --args '{"app":"TextEdit"}'
+
+# Inspect code-first runtime availability
+ocu capabilities
+ocu capabilities --json
+
+# Run one JavaScript evaluation, from an argument, stdin, or a file
+ocu js 'var apps = await cua.listApps({ emit: false }); nodeRepl.write(apps)'
+printf '%s' 'nodeRepl.write(6 * 7)' | ocu js -
+ocu js --file ./automation.mjs
+
+# Keep JavaScript and cua bindings for the current terminal session
+ocu repl
 
 # Run a sequence in one process so element_index state can be reused
 # Sequence runs sleep 1s between successful operations by default
@@ -137,6 +154,9 @@ open-computer-use call --calls-file examples/textedit-overlay-seq.json --sleep 0
 
 # Check permissions; onboarding only opens when something is missing
 open-computer-use doctor
+
+# macOS: query permission JSON without opening onboarding
+ocu doctor --json
 
 # Run local validation from a source checkout
 make smoke
@@ -156,6 +176,24 @@ open-computer-use -h
 ocu -h
 ```
 
+`ocu js` closes its JavaScript Worker and native MCP child after one
+evaluation. `ocu repl` keeps them for the current terminal session until
+`.exit`, Ctrl-D, or termination; `.reset` clears its bindings. On macOS, the
+separate hidden `Open Computer Use.app` permission agent may remain resident so
+later commands reuse the same permission identity. `ocu mcp` continues to expose
+the nine core native tools, plus `query` on macOS.
+
+The npm launcher itself currently requires Node.js 18 or newer. Its help always lists
+`js` / `repl`, while `ocu capabilities --json` reports whether Node, the REPL
+adapter/kernel, and the native runtime are available. Once started, it reuses
+the current Node executable instead of looking up another `node` on PATH.
+
+`ocu doctor --json` (macOS only) returns `platform`, `accessibilityTrusted`, `screenCaptureGranted`, `allGranted`, and `missingPermissions`. Missing permissions still exit with code 0; hosts should check `allGranted` and query again after authorization. The snapshot uses existing system API/TCC diagnostics and does not prove an operation succeeded; some permission changes may still require a process restart.
+
+### Targeted query (macOS)
+
+Find controls by text or role without taking a screenshot. See [query usage](docs/targeted-query.md).
+
 ## Cursor Motion
 
 Cursor Motion is an open-source cursor motion system for macOS, based on public information shared by members of the Software.Inc team. You can download the app from the [Releases page](https://github.com/iFurySt/open-codex-computer-use/releases).
@@ -174,4 +212,8 @@ Cursor Motion is an open-source cursor motion system for macOS, based on public 
 
 ## License
 
-[MIT](./LICENSE). Third-party attribution is listed in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+[MIT](./LICENSE).
+
+### Persistent configuration
+
+Use `ocu config` to inspect settings and `ocu config set image.format jpg` to persist a macOS screenshot preference. Environment overrides remain supported. See [configuration](docs/configuration.md) ([简体中文](docs/configuration.zh-CN.md)) for settings and CLI commands.
