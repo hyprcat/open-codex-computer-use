@@ -9,9 +9,18 @@ final class AppIntentExecutionTests: XCTestCase {
     }
 
     func testRunRefusesBuiltInShortcutsActions() {
-        XCTAssertThrowsError(try AppIntentExecution.run(bundleID: "is.workflow", actionID: "actions.runshellscript", parameters: [:], input: nil))
+        XCTAssertThrowsError(try AppIntentExecution.run(app: "is.workflow", actionID: "is.workflow.actions.runshellscript", parameters: [:]))
     }
 
+    func testRenameRetainsPinAndDeletedIdentityCannotAdoptSameNameClone() {
+        let record = AppIntentExecution.TemplateRecord(name: "OCU Fixture Original", shortcutID: "approved-id")
+        let renamed = AppIntentExecution.InstalledShortcut(name: "Renamed", id: "approved-id")
+        let clone = AppIntentExecution.InstalledShortcut(name: record.name, id: "different-id")
+        XCTAssertEqual(AppIntentExecution.installationMatches(record, shortcuts: [renamed, clone]).first?.id, "approved-id")
+        XCTAssertTrue(AppIntentExecution.installationMatches(record, shortcuts: [clone]).isEmpty)
+        let pending = AppIntentExecution.TemplateRecord(name: record.name, shortcutID: nil)
+        XCTAssertEqual(AppIntentExecution.installationMatches(pending, shortcuts: [clone, clone]).count, 2)
+    }
     func testIdentifierValidationRejectsPathCharacters() {
         XCTAssertTrue(AppIntentExecution.isValidIdentifier("com.apple.Notes.CreateNote"))
         XCTAssertTrue(AppIntentExecution.isValidIdentifier("is.workflow.actions.run-shortcut_2"))

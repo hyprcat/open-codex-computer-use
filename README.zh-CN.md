@@ -167,6 +167,8 @@ Cursor Motion 是一个面向 macOS 的开源光标运动系统，基于 Softwar
 
 ### 定向查找（macOS）
 
+App 提供 App Intent 时，可以用 `app.listIntents()` 发现动作和参数，再准备并执行。详见[使用说明和支持范围](docs/app-intents.zh-CN.md)。目前是实验性能力。
+
 知道控件文案或角色时，可以用 `app.query()` 查找，不用先截图和读取整棵 AX 树。详见[查询说明](docs/targeted-query.zh-CN.md)。
 
 ### 持久化配置

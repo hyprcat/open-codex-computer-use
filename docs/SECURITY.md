@@ -6,7 +6,7 @@
 - Codex plugin 默认把一个本地 Node.js REPL 放在 native MCP 前面，npm CLI 的 `ocu js` / `ocu repl` 也直接使用同一 runtime。`js` 是任意本地 JavaScript 执行能力，不是受限表达式语言：代码可按启动进程权限读取文件、环境、模块和网络。只应在 host 已经具备并允许 model-code execution 的信任边界内启用；不接受这条边界的 host 应继续直连 `open-computer-use mcp` 的离散 native tools。
 - REPL 里的 Computer Use 调用仍经过 native MCP，因此密码管理器 denylist、`OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS` 等 native safety gate 不会被 JavaScript adapter 绕过。JS kernel 在 Worker 中运行，超时会终止整个 Worker 并清空 bindings。
 - 所有动作都必须显式带 `app` 参数；当前不会在后台自动扫描并控制任意 app。
-- macOS `run_intent` 只执行应用自己的 App Intent：identifier 必须是点分且只含字母、数字、`_`、`-` 的片段（因此 `/`、`..`、空格、换行不会进入文件名），并显式拒绝 `is.workflow.` 开头的 Shortcuts 内置动作。每个 intent 首次调用只生成并打开一个单动作 shortcut，由用户在 Shortcuts 里点一次 Add Shortcut 才会真正安装；参数变化需要重新走一次这个确认。子进程的 stdin 接 `/dev/null`，并有 120s 的执行上限。
+- macOS App Intent 调用只接受从目标 App 元数据中发现的动作，保留应用 denylist，拒绝内置动作和非法参数。准备只生成参数引用模板，不执行动作；首次安装由用户在 Shortcuts 中确认。参数通过临时 JSON 逐次传入，模板缓存目录权限 0700、文件 0600，安装记录锁定 UUID。公开 CLI 无法核验用户编辑后的模板内容，因此已确认模板仍是信任边界。子进程 stdin 接 `/dev/null`，执行截止 20 秒，返回输出有界；已开始执行后的超时或错误返回 `unknown`，禁止自动 GUI 重试。详见 [App Intent 说明](app-intents.zh-CN.md)。
 - macOS 真实 app 路径依赖 `Open Computer Use.app` 已获得 `Accessibility` 与 `Screen Recording` 权限；终端里的 CLI / Node launcher 会把 `mcp`、`doctor`、`call`、`snapshot` 和 `list-apps` 转发给由 LaunchServices 启动的本地 app agent，避免把权限要求落到 iTerm / Terminal 身上。
 - 实验性 Linux runtime 依赖已登录桌面用户的 AT-SPI2 / D-Bus session；coordinate mouse、drag、keyboard synthesis 只是 best-effort fallback，不应被视为跨 Wayland compositor 的通用后台输入授权。
 

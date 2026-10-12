@@ -290,3 +290,56 @@ test("query returns truncation metadata and rejects malformed native responses",
   assert.equal(bad.isError, true);
   assert.match(bad.content.at(-1).text, /Invalid query response/);
 });
+
+function intentNative(available = true) {
+  const calls = [];
+  return { calls, async request(method, params) {
+    if (method === "tools/list") { calls.push({name: "tools/list"}); return {tools: available ? [{name: "list_intents"}, {name: "run_intent"}] : []}; }
+    calls.push(params);
+    const status = params.name === "list_intents" ? "available" : params.arguments.prepare ? "needs_approval" : "unknown";
+    return textResult(JSON.stringify({status, execution_started: status === "unknown", safe_to_fallback: status === "needs_approval", intents: []}), status === "unknown");
+  }};
+}
+
+test("Intent discovery and preparation preserve capability checks and fresh parameters", async () => {
+  const native = intentNative(), session = new PersistentJavaScriptSession({native});
+  let result = await session.run(`var intentApp = await cua.getApp("Fixture", {initialState:false}); nodeRepl.write(await intentApp.listIntents({limit:3,offset:2}));`);
+  assert.equal(result.isError, false);
+  result = await session.run(`nodeRepl.write(await intentApp.prepareIntent("Echo", {text:"first", count:3}));`);
+  assert.equal(result.isError, false);
+  result = await session.run(`nodeRepl.write(JSON.stringify(await intentApp.runIntent("Echo", {text:"second", count:9})));`);
+  assert.equal(result.isError, false);
+  assert.equal(JSON.parse(result.content.at(-1).text).status, "unknown");
+  assert.equal(JSON.parse(result.content.at(-1).text).safe_to_fallback, false);
+  assert.equal(native.calls.filter(call => call.name === "tools/list").length, 1);
+  assert.deepEqual(native.calls.at(-2).arguments, {app:"Fixture",action_id:"Echo",parameters:{text:"first",count:3},prepare:true});
+  assert.deepEqual(native.calls.at(-1).arguments, {app:"Fixture",action_id:"Echo",parameters:{text:"second",count:9},prepare:false});
+  assert.ok(!native.calls.some(call => call.name === "get_app_state"));
+});
+
+test("older and non-macOS runtimes return unavailable without invoking missing tools", async () => {
+  const native = intentNative(false), session = new PersistentJavaScriptSession({native});
+  const result = await session.run(`var oldApp = await cua.getApp("Fixture", {initialState:false}); nodeRepl.write(await oldApp.listIntents()); nodeRepl.write(JSON.stringify(await oldApp.runIntent("Echo")));`);
+  assert.equal(result.isError, false);
+  assert.equal(JSON.parse(result.content.at(-1).text).reason, "unsupported_runtime");
+  assert.equal(native.calls.length, 1);
+});
+
+test("Intent input rejects non-JSON values and malformed pagination before invoking native", async () => {
+  const native = intentNative(), session = new PersistentJavaScriptSession({native});
+  await session.run(`var validatedIntentApp = await cua.getApp("Fixture", {initialState:false});`);
+  for (const expression of [`runIntent("Echo", {x:undefined})`, `runIntent("Echo", {x:Infinity})`, `runIntent("Echo", {x:1n})`, `runIntent("Echo", [])`, `runIntent("", {})`, `listIntents({offset:-1})`, `listIntents({limit:0})`, `listIntents({extra:true})`, `runIntent("Echo", {x:"a".repeat(65537)})`]) {
+    assert.equal((await session.run(`await validatedIntentApp.${expression}`)).isError, true, expression);
+  }
+  assert.equal(native.calls.length, 0);
+});
+
+test("malformed native Intent errors remain errors", async () => {
+  const native = intentNative();
+  const original = native.request;
+  native.request = async (method, params) => method === "tools/list" ? original(method, params) : textResult("Missing parameter: text", true);
+  const session = new PersistentJavaScriptSession({native});
+  const result = await session.run(`var badIntentApp = await cua.getApp("Fixture", {initialState:false}); await badIntentApp.runIntent("Echo");`);
+  assert.equal(result.isError, true);
+  assert.match(result.content.at(-1).text, /Missing parameter/);
+});

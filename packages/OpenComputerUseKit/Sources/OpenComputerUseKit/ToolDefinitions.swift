@@ -69,21 +69,25 @@ public enum ToolDefinitions {
             )
         ),
         ToolDefinition(
+            name: "list_intents",
+            description: "Discover this installed app's App Intents and parameter schemas without launching it, capturing the UI, or requiring shortcut bindings. Returns paginated metadata with can_execute and unsupported_reasons. Metadata absence is not proof that the app has no automation capabilities. macOS only.",
+            annotations: readOnlyAnnotations(),
+            inputSchema: objectSchema(properties: [
+                "app": stringProperty(description: "Installed app name or bundle identifier"),
+                "limit": positiveIntegerProperty(description: "Page size; default 50, capped at 100"),
+                "offset": ["type": "integer", "minimum": 0, "maximum": 1000, "description": "Page offset; default 0"],
+            ], required: ["app"])
+        ),
+        ToolDefinition(
             name: "run_intent",
-            description: "Run one of an app's App Intents by identity, instead of driving its interface. Useful when an app exposes the operation as an intent — it runs without the window being usable or frontmost. The first call for a given intent installs a one-action shortcut and opens Shortcuts for a one-time approval; call it again afterwards to run. Built-in Shortcuts actions are refused; only an app's own intents run. This tool is part of plugin `Computer Use`.",
+            description: "Run a catalog-discovered App Intent with fresh named parameters via Shortcuts. Use list_intents first. Missing system import confirmation returns needs_approval without executing; prepare=true generates and opens a template containing no caller values. Run again after the user confirms Add Shortcut. Completed means Shortcuts exited successfully; unknown means execution may have happened and must not be retried or replaced with GUI actions before verification. macOS only.",
             annotations: defaultAnnotations(),
-            inputSchema: objectSchema(
-                properties: [
-                    "bundle_id": stringProperty(description: "Bundle identifier of the app whose intent should run, e.g. com.apple.Notes"),
-                    "action_id": stringProperty(description: "The intent's name, or the full `<bundle id>.<intent name>` identifier"),
-                    "input": stringProperty(description: "Text passed to the intent as its input, when it takes one"),
-                    "parameters": [
-                        "type": "object",
-                        "description": "Parameters baked into the installed shortcut. Changing these needs a new one-time approval.",
-                    ],
-                ],
-                required: ["bundle_id", "action_id"]
-            )
+            inputSchema: objectSchema(properties: [
+                "app": stringProperty(description: "Installed app name or bundle identifier"),
+                "action_id": stringProperty(description: "Action id from list_intents"),
+                "parameters": ["type": "object", "description": "Fresh named scalar/enum parameters validated against the discovered schema"],
+                "prepare": ["type": "boolean", "description": "Generate/open the system import template without running the Intent; default false"],
+            ], required: ["app", "action_id"])
         ),
         ToolDefinition(
             name: "query",

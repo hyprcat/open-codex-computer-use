@@ -48,13 +48,20 @@ public final class ComputerUseToolDispatcher {
         switch name {
         case "list_apps":
             return service.listApps()
+        case "list_intents":
+            let limit = min(100, try optionalPositiveInt("limit", in: arguments) ?? 50)
+            let offset = try validatedIntentOffset(arguments["offset"])
+            return try AppIntentExecution.list(app: requireString("app", in: arguments), limit: limit, offset: offset)
         case "run_intent":
-            return try AppIntentExecution.run(
-                bundleID: requireString("bundle_id", in: arguments),
-                actionID: requireString("action_id", in: arguments),
-                parameters: arguments["parameters"] as? [String: Any] ?? [:],
-                input: optionalString("input", in: arguments)
-            )
+            if arguments["input"] != nil { throw ComputerUseError.invalidArguments("Use named parameters from list_intents, not input") }
+            let parameters: [String: Any]
+            if let supplied = arguments["parameters"] {
+                guard let object = supplied as? [String: Any] else { throw ComputerUseError.invalidArguments("parameters must be an object") }
+                parameters = object
+            } else { parameters = [:] }
+            return try AppIntentExecution.run(app: requireString("app", in: arguments),
+                actionID: requireString("action_id", in: arguments), parameters: parameters,
+                prepare: try validatedBoolean(arguments["prepare"], name: "prepare"))
         case "query":
             let matches = try service.query(
                 app: requireString("app", in: arguments),
@@ -464,9 +471,23 @@ func validatedQueryString(_ value: Any?, key: String) throws -> String? {
 }
 
 func validatedQueryExact(_ value: Any?) throws -> Bool {
+    try validatedBoolean(value, name: "exact")
+}
+
+func validatedBoolean(_ value: Any?, name: String) throws -> Bool {
     guard let value else { return false }
     guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
-        throw ComputerUseError.invalidArguments("exact must be true or false")
+        throw ComputerUseError.invalidArguments("\(name) must be true or false")
     }
     return number.boolValue
+}
+
+func validatedIntentOffset(_ value: Any?) throws -> Int {
+    guard let value else { return 0 }
+    guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+          number.doubleValue.isFinite, number.doubleValue >= 0, number.doubleValue <= 1000,
+          number.doubleValue.rounded(.down) == number.doubleValue else {
+        throw ComputerUseError.invalidArguments("offset must be an integer from 0 to 1000")
+    }
+    return Int(number.doubleValue)
 }

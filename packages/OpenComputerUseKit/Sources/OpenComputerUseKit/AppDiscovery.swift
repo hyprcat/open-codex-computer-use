@@ -332,7 +332,7 @@ enum AppDiscovery {
         try openApplication(at: appURL)
     }
 
-    private static func applicationURL(named query: String) -> URL? {
+    static func applicationURL(named query: String, maximumEntries: Int? = nil, deadline: TimeInterval? = nil) -> URL? {
         let targetName = stripAppSuffix(from: query).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !targetName.isEmpty else {
             return nil
@@ -341,6 +341,7 @@ enum AppDiscovery {
         let fileManager = FileManager.default
         let resourceKeys: [URLResourceKey] = [.isApplicationKey, .isDirectoryKey, .nameKey]
         var visitedPaths: Set<String> = []
+        var entries = 0
 
         for root in standardApplicationSearchRoots where fileManager.fileExists(atPath: root.path) {
             guard let enumerator = fileManager.enumerator(
@@ -352,6 +353,9 @@ enum AppDiscovery {
             }
 
             for case let candidateURL as URL in enumerator {
+                entries += 1
+                if let maximumEntries, entries > maximumEntries { return nil }
+                if let deadline, ProcessInfo.processInfo.systemUptime >= deadline { return nil }
                 guard candidateURL.pathExtension.caseInsensitiveCompare("app") == .orderedSame else {
                     continue
                 }

@@ -37,6 +37,9 @@ The runtime exposes an asynchronous app-bound API:
 - \`await cua.getState({ emit? })\`: list current apps.
 - \`await cua.listApps({ emit? })\`: list current apps.
 - \`await cua.getApp(nameOrBundleID, { initialState? })\`: bind an app; initialState defaults to true. Use false for a lightweight binding before query.
+- \`await app.listIntents({ limit?, offset? })\`: discover app-provided actions and schemas without launching the app. macOS only.
+- \`await app.prepareIntent(actionId, parameters?)\`: generate/open the system import template; no Intent runs. The user confirms Add Shortcut once per template.
+- \`await app.runIntent(actionId, parameters?)\`: run with fresh parameters; inspect status and safe_to_fallback. Never retry an unknown execution result without checking effects.
 - \`await app.query({ text?, role?, exact?, limit?, maxNodes?, windowId? })\`: macOS-only AX lookup; returns matches and truncation metadata, with indexes usable in this native session.
 - \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement? })\`
 - \`await app.getScreenshot({ emit? })\`
@@ -259,8 +262,44 @@ export function createCuaApi(native, activeOutput) {
     activeOutput().write(COMPUTER_USE_GUIDANCE, "cua.core");
     docsEmitted = true;
   }
+  let nativeTools;
+  async function supports(tool) {
+    nativeTools ??= native.request("tools/list", {}).then(result => new Set((result.tools ?? []).map(item => item.name)));
+    return (await nativeTools).has(tool);
+  }
+  async function intentCall(tool, args) {
+    if (!await supports(tool)) return { status: "unavailable", reason: "unsupported_runtime", execution_started: false, safe_to_fallback: true, ...(tool === "list_intents" ? { intents: [] } : {}) };
+    const result = await native.request("tools/call", { name: tool, arguments: args });
+    const text = toolResultText(result);
+    let response;
+    try { response = JSON.parse(text); } catch { throw new Error(text || "Invalid Intent response"); }
+    if (!isPlainObject(response) || typeof response.status !== "string") throw new Error("Invalid Intent response");
+    return response; // Preserve structured unknown/failed states even when MCP isError is true.
+  }
+  function intentArguments(actionId, parameters) {
+    if (typeof actionId !== "string" || !actionId.trim() || actionId.length > 1000) throw new Error("actionId must be a discovered Intent id");
+    if (!isPlainObject(parameters)) throw new Error("Intent parameters must be an object");
+    const serialized = JSON.stringify(parameters, (_key, value) => {
+      if (["undefined", "function", "symbol", "bigint"].includes(typeof value) || (typeof value === "number" && !Number.isFinite(value))) throw new Error("Intent parameters must be JSON values");
+      return value;
+    });
+    if (Buffer.byteLength(serialized) > 65536) throw new Error("Intent parameters exceed 64 KiB");
+    return { action_id: actionId, parameters: JSON.parse(serialized) };
+  }
   function appBinding(app) {
     return Object.freeze({
+      async listIntents(options = {}) {
+        if (!isPlainObject(options) || Object.keys(options).some(key => !["limit", "offset"].includes(key))) throw new Error("listIntents expects limit/offset options");
+        if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) throw new Error("limit must be a positive integer");
+        if (options.offset !== undefined && (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 1000)) throw new Error("offset must be an integer from 0 to 1000");
+        return await intentCall("list_intents", { app, ...options });
+      },
+      async prepareIntent(actionId, parameters = {}) {
+        return await intentCall("run_intent", { app, ...intentArguments(actionId, parameters), prepare: true });
+      },
+      async runIntent(actionId, parameters = {}) {
+        return await intentCall("run_intent", { app, ...intentArguments(actionId, parameters), prepare: false });
+      },
       async query(options = {}) {
         if (!isPlainObject(options)) throw new Error("app.query expects an options object");
         for (const key of Object.keys(options)) {
