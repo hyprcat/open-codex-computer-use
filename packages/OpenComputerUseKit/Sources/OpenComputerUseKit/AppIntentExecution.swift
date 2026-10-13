@@ -128,7 +128,10 @@ enum AppIntentExecution {
             if matches.count == 1 {
                 current.shortcutID = matches[0].id
                 try writeRecord(current, to: recordFile)
-                if prepare { return try state("ready", reason: "", started: false, extra: ["shortcut_id": matches[0].id]) }
+                if prepare { return try state("ready", reason: "", started: false, extra: [
+                    "shortcut_id": matches[0].id,
+                    "next": "The template is installed. First execution may still request app access or permission to output the result in Shortcuts."
+                ]) }
                 return try execute(shortcutID: matches[0].id, parameters: values)
             }
             if matches.count > 1 { return try state("unavailable", reason: "ambiguous_generated_shortcut", started: false) }
@@ -166,7 +169,7 @@ enum AppIntentExecution {
         let opened = IntentProcess.run("/usr/bin/open", ["-a", "Shortcuts", namedSigned.path], timeout: 2)
         return try state("needs_approval", reason: opened.succeeded ? "confirm_add_shortcut" : "open_import_failed", started: false,
                          extra: ["file": namedSigned.path, "shortcut": record!.name,
-                                 "next": "Review and add the generated shortcut in Shortcuts. Then runIntent again with fresh parameters. No Intent has run."])
+                                 "next": "Review and add the generated shortcut in Shortcuts. Then runIntent with fresh parameters. First execution may separately request app access or permission to output the result. No Intent has run."])
     }
 
     private static func execute(shortcutID: String, parameters: [String: Any]) throws -> ToolCallResult {
@@ -176,12 +179,14 @@ enum AppIntentExecution {
         let input = directory.appendingPathComponent("input.json"), output = directory.appendingPathComponent("output.txt")
         try JSONSerialization.data(withJSONObject: parameters, options: [.sortedKeys]).write(to: input)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: input.path)
-        let result = IntentProcess.run("/usr/bin/shortcuts", ["run", shortcutID, "--input-path", input.path, "--output-path", output.path, "--output-type", "public.utf8-plain-text"], timeout: 20)
+        // The fixture triggered a Shortcuts coercion crash on macOS 26.5.1 with
+        // public.utf8-plain-text. Request plain text; decode the returned bytes.
+        let result = IntentProcess.run("/usr/bin/shortcuts", ["run", shortcutID, "--input-path", input.path, "--output-path", output.path, "--output-type", "public.plain-text"], timeout: 20)
         guard result.succeeded else {
             let started = result.failure != "launch_failed"
             return try state(started ? "unknown" : "failed", reason: result.failure ?? "workflow_error", started: started,
                              extra: ["diagnostic": result.diagnostic,
-                                     "next": "Check whether the operation happened before retrying or using the GUI."], isError: true)
+                                     "next": "Check Shortcuts for pending input, app access or output approval, and check whether the operation happened before retrying or using the GUI."], isError: true)
         }
         var text = "", truncated = false
         if FileManager.default.fileExists(atPath: output.path) {

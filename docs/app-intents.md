@@ -31,6 +31,8 @@ ocu call run_intent --args '{"app":"Example App","action_id":"Echo","parameters"
 
 Templates live in `intent-templates/` beside the OCU configuration file, normally `~/.config/ocu/intent-templates/`. They contain parameter names and references. Each execution uses a fresh temporary JSON file and removes it afterward. Installed templates are called by Shortcuts UUID, so renaming does not select another shortcut.
 
+Adding a template and authorizing execution are separate steps. On first execution, Shortcuts may request app access or ask “Allow … to output …?”. Review the content before allowing it. `Allow Once` permits this output; `Always Allow` remembers output approval for that shortcut. `prepareIntent` never executes the action or completes these approvals in advance.
+
 ## API and results
 
 | JS API | Native tool | Purpose |
@@ -54,7 +56,7 @@ Parameters currently accept strings, booleans, integers in JavaScript’s safe r
 
 This is experimental. Discovery reads the main app bundle's `Metadata.appintents/extract.actionsdata` and currently recognizes JSON `version: 1`. This format is not an Apple public discovery API. Legacy SiriKit definitions, separate extension definitions and future formats are not supported yet. `can_execute` means the schema fits this implementation; system permissions or the app can still prevent execution.
 
-Execution uses the system `shortcuts` command and returns `unknown` if no reliable result arrives within 20 seconds. Installation confirmation and the app's system prompts remain user steps. Installed templates can be edited in Shortcuts; its public CLI cannot verify their contents. Keep the generated actions and parameter references intact.
+Execution uses the system `shortcuts` command and returns `unknown` if no reliable result arrives within 20 seconds. Waiting for system approval can also time out: the action may already have executed while output approval is pending. Check the prompts and operation before deciding to retry. System prompts require separate handling; OCU does not automatically allow them. Installed templates can be edited in Shortcuts; its public CLI cannot verify their contents. Keep the generated actions and parameter references intact.
 
 ## Local integration test
 
@@ -73,4 +75,4 @@ python3 scripts/test-app-intent-fixture.py --prepare
 python3 scripts/test-app-intent-fixture.py
 ```
 
-The test requires both executions to return their exact inputs. An unknown result stops the test immediately. For CLI behavior, see [Apple's command-line guide](https://support.apple.com/guide/shortcuts-mac/apd455c82f02/mac).
+Watch for system prompts during the test. Both executions must return their exact inputs. `Allow Once` may prompt again on the second call; choose `Always Allow` if you want to retain output approval for this test template. An unknown result stops the test immediately without retrying. For CLI behavior, see [Apple's command-line guide](https://support.apple.com/guide/shortcuts-mac/apd455c82f02/mac).

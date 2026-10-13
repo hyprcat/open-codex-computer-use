@@ -31,6 +31,8 @@ ocu call run_intent --args '{"app":"Example App","action_id":"Echo","parameters"
 
 模板放在 OCU 配置文件同级的 `intent-templates/` 目录，默认是 `~/.config/ocu/intent-templates/`。模板只保存参数名称和引用，每次执行使用新的临时 JSON 文件，结束后删除。安装后按 Shortcuts 的 UUID 调用，重命名不会换错目标。
 
+添加模板和执行授权是两回事。首次运行时，Shortcuts 可能另行询问 App 权限，或显示 “Allow … to output …?”。检查内容后再允许；`Allow Once` 只允许这一次输出，`Always Allow` 会记住这个快捷指令的输出授权。`prepareIntent` 不执行动作，也不会提前完成这些授权。
+
 ## 接口和结果
 
 | JS 接口 | Native tool | 作用 |
@@ -54,7 +56,7 @@ ocu call run_intent --args '{"app":"Example App","action_id":"Echo","parameters"
 
 这是实验性能力：发现读取主 App bundle 的 `Metadata.appintents/extract.actionsdata`，目前识别其中的 JSON `version: 1`。这个格式不是 Apple 的公开发现 API；旧 SiriKit 定义、扩展中的独立定义和未来格式暂不支持。`can_execute` 表示参数和格式符合当前实现，系统权限或 App 自身仍可能阻止执行。
 
-执行通过系统 `shortcuts` 命令，20 秒没有可靠结果就返回 `unknown`。安装确认和 App 自身的系统提示仍由用户处理。用户添加后可以在 Shortcuts 中编辑模板；OCU 无法通过公开 CLI 核验其内容，请保留生成的动作和参数引用。
+执行通过系统 `shortcuts` 命令，20 秒没有可靠结果就返回 `unknown`。等待系统授权也可能超时，此时动作可能已经执行，只是结果尚未允许输出。先检查弹窗和操作结果，再决定是否重试。系统提示需要单独处理，OCU 不会自动允许。用户添加后可以在 Shortcuts 中编辑模板；OCU 无法通过公开 CLI 核验其内容，请保留生成的动作和参数引用。
 
 ## 本地集成测试
 
@@ -73,4 +75,4 @@ python3 scripts/test-app-intent-fixture.py --prepare
 python3 scripts/test-app-intent-fixture.py
 ```
 
-两次执行必须返回各自的完整输入；遇到未知结果会立即停止。系统 CLI 用法见 [Apple 的说明](https://support.apple.com/guide/shortcuts-mac/apd455c82f02/mac)。
+测试时留意系统弹窗。两次执行必须返回各自的完整输入；`Allow Once` 可能让第二次再次询问，愿意保留这个测试模板的输出授权时可选择 `Always Allow`。遇到未知结果会立即停止，不会自动重试。系统 CLI 用法见 [Apple 的说明](https://support.apple.com/guide/shortcuts-mac/apd455c82f02/mac)。

@@ -39,11 +39,13 @@ if args.prepare:
     print(json.dumps(call('run_intent', {'app': 'dev.ocu.IntentFixture', 'action_id': intent['id'],
                                        'parameters': values[0], 'prepare': True}), ensure_ascii=False, indent=2))
 else:
+    print('Watch Shortcuts for app access or output approval. Adding the template does not grant output approval.', flush=True)
     for supplied in values:
         response = call('run_intent', {'app': 'dev.ocu.IntentFixture', 'action_id': intent['id'], 'parameters': supplied})
         if response['status'] == 'unknown':
             assert response['execution_started'] and not response['safe_to_fallback'], response
-            raise SystemExit('Integration blocked: execution outcome is unknown. Check the operation; no automatic retry was made.')
+            print(json.dumps(response, ensure_ascii=False, indent=2), flush=True)
+            raise SystemExit('Integration blocked: execution outcome is unknown. Check system prompts and the operation; no automatic retry was made.')
         assert response['status'] == 'completed', response
         assert json.loads(response['output']) == supplied, response
     print('Discovery and two executions with different runtime parameters passed.')
