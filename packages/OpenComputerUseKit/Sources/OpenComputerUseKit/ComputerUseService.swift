@@ -348,6 +348,22 @@ func screenshotPixelToWindowPoint(
     )
 }
 
+/// AX ranges use UTF-16. Reject unavailable, out-of-bounds or split-surrogate ranges.
+func typedTextReplacement(value: String, selection: CFRange, text: String) -> (value: String, caret: Int)? {
+    let units = Array(value.utf16)
+    guard selection.location >= 0, selection.location <= units.count,
+          selection.length >= 0, selection.length <= units.count - selection.location
+    else { return nil }
+    let end = selection.location + selection.length
+    func splitsSurrogate(_ offset: Int) -> Bool {
+        offset > 0 && offset < units.count
+            && (0xD800...0xDBFF).contains(units[offset - 1]) && (0xDC00...0xDFFF).contains(units[offset])
+    }
+    guard !splitsSurrogate(selection.location), !splitsSurrogate(end) else { return nil }
+    let range = NSRange(location: selection.location, length: selection.length)
+    return ((value as NSString).replacingCharacters(in: range, with: text), selection.location + text.utf16.count)
+}
+
 let nonSettableSetValueErrorMessage = "Cannot set a value for an element that is not settable"
 
 func setValueAttributeIsSettable(result: AXError, settable: Bool, attribute: String) throws -> Bool {
@@ -947,6 +963,8 @@ public final class ComputerUseService {
             return try actionResult(for: query)
         }
 
+        if text.isEmpty { return try actionResult(for: query) }
+
         if keyMethod == .skyKey {
             let target = try skyKeyTarget(for: snapshot)
             try InputSimulation.typeTextWithSkyLight(text, windowID: target.windowID, pid: target.pid)
@@ -958,23 +976,28 @@ public final class ComputerUseService {
 
         // The focus now, not at the snapshot's read: a key since then (⌘S opening a save sheet,
         // ⌘L) moves it, and text meant for the sheet went into the document under it.
-        let focused = Self.focusedElement(pid: snapshot.app.pid) ?? snapshot.focusedElement
-        if try typeTextBySettingFocusedValueIfAvailable(text, on: focused) {
+        guard let focused = Self.focusedElement(pid: snapshot.app.pid) else {
+            throw ComputerUseError.stateUnavailable("type_text could not read the app's current focused element. Focus a text entry area and try again.")
+        }
+        if try typeTextUsingAccessibility(text, on: focused, pid: snapshot.app.pid) {
             pauseBeforeReadBack(0.1)
             return try actionResult(for: query)
         }
 
-        guard try canTypeTextUsingKeyboardFallback(on: focused) else {
+        guard canTypeTextUsingKeyboardFallback(on: focused) else {
             throw ComputerUseError.stateUnavailable("type_text requires a focused editable text element. Click a text entry area first, or use set_value on a settable text element.")
         }
 
+        try requireCurrentTextFocus(focused, pid: snapshot.app.pid)
         try InputSimulation.typeText(text, pid: snapshot.app.pid)
         return try actionResult(for: query)
     }
 
     private static func focusedElement(pid: pid_t) -> AXUIElement? {
         var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.2)
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
         return (focused as! AXUIElement)
     }
@@ -1855,46 +1878,76 @@ public final class ComputerUseService {
         }
     }
 
-    private func typeTextBySettingFocusedValueIfAvailable(_ text: String, on element: AXUIElement?) throws -> Bool {
-        guard let element else {
-            return false
-        }
-
-        guard try isSettableForSetValue(element: element, attribute: kAXValueAttribute) else {
-            return false
-        }
-
+    private func requireCurrentTextFocus(_ element: AXUIElement, pid: pid_t) throws {
         try requireUsableComputerUseSession()
-        // With a selection, or the caret before the end, typed text replaces the selection at
-        // the caret, as keys do: ⌘A then type replaced nothing and appended to the whole text.
-        var rangeValue: CFTypeRef?
-        var range = CFRange()
-        if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success,
-           let rangeValue, CFGetTypeID(rangeValue) == AXValueGetTypeID(),
-           AXValueGetValue(rangeValue as! AXValue, .cfRange, &range),
-           range.length > 0 || range.location < (stringValue(of: element, attribute: kAXValueAttribute) as NSString?)?.length ?? 0,
-           (try? isSettableForSetValue(element: element, attribute: kAXSelectedTextAttribute)) == true,
-           AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success {
-            return true
-        }
-
-        let baseValue = editableBaseValue(for: element)
-        let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, (baseValue + text) as CFString)
-        switch result {
-        case .success:
-            return true
-        case .failure, .attributeUnsupported, .actionUnsupported, .cannotComplete, .noValue, .invalidUIElement, .illegalArgument:
-            return false
-        default:
-            throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
+        guard let current = Self.focusedElement(pid: pid), CFEqual(element, current) else {
+            throw ComputerUseError.stateUnavailable("type_text focus changed before input. Read the app state and try again.")
         }
     }
 
-    private func canTypeTextUsingKeyboardFallback(on element: AXUIElement?) throws -> Bool {
-        guard let element else {
-            return false
+    private func selectedRange(of element: AXUIElement) -> CFRange? {
+        var raw: CFTypeRef?
+        var range = CFRange()
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &raw) == .success,
+              let raw, CFGetTypeID(raw) == AXValueGetTypeID(),
+              AXValueGetType(raw as! AXValue) == .cfRange,
+              AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return nil }
+        return range
+    }
+
+    private func typeTextUsingAccessibility(_ text: String, on element: AXUIElement, pid: pid_t) throws -> Bool {
+        let attribute: String
+        let value: String
+        var caret: Int?
+        // SelectedText preserves the selection/caret and rich text. It can be
+        // writable even when replacing the entire AXValue is not supported.
+        if isSettable(element: element, attribute: kAXSelectedTextAttribute) {
+            attribute = kAXSelectedTextAttribute
+            value = text
+        } else {
+            let valueWritable = isSettable(element: element, attribute: kAXValueAttribute)
+            let rangeWritable = isSettable(element: element, attribute: kAXSelectedTextRangeAttribute)
+            let originalValue = stringValue(of: element, attribute: kAXValueAttribute)
+            let currentSelection = selectedRange(of: element)
+            if inputFallbackDebugEnabled(environment: ProcessInfo.processInfo.environment) {
+                fputs("[open-computer-use] type_text value_writable=\(valueWritable) range_writable=\(rangeWritable) value_readable=\(originalValue != nil) selection_readable=\(currentSelection != nil)\n", stderr)
+            }
+            guard valueWritable, rangeWritable, let original = originalValue, let selection = currentSelection else { return false }
+            // Retain placeholder handling, but never splice a range into a
+            // synthesized descendant string that differs from the reported value.
+            let editable = editableBaseValue(for: element)
+            let base = editable.isEmpty && !normalizeEditablePlaceholderText(original).isEmpty ? editable : original
+            guard let replacement = typedTextReplacement(value: base, selection: selection, text: text) else { return false }
+            guard stringValue(of: element, attribute: kAXValueAttribute) == original,
+                  let current = selectedRange(of: element), current.location == selection.location, current.length == selection.length
+            else { throw ComputerUseError.stateUnavailable("type_text text or selection changed before input. Read the app state and try again.") }
+            attribute = kAXValueAttribute
+            value = replacement.value
+            caret = replacement.caret
         }
 
+        try requireCurrentTextFocus(element, pid: pid)
+        let result = AXUIElementSetAttributeValue(element, attribute as CFString, value as CFString)
+        guard result == .success else {
+            // A failed/timed-out write may already have changed the control.
+            // Never append or resend the same input through another path.
+            throw ComputerUseError.message("type_text AXUIElementSetAttributeValue(\(attribute)) failed with \(result.rawValue). Read the current text before retrying.")
+        }
+        if let caret {
+            try requireCurrentTextFocus(element, pid: pid)
+            guard stringValue(of: element, attribute: kAXValueAttribute) == value else {
+                throw ComputerUseError.stateUnavailable("type_text value changed after writing; caret was not moved. Read the current text before retrying.")
+            }
+            var range = CFRange(location: caret, length: 0)
+            guard let axRange = AXValueCreate(.cfRange, &range),
+                  AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, axRange) == .success,
+                  let applied = selectedRange(of: element), applied.location == caret, applied.length == 0
+            else { throw ComputerUseError.stateUnavailable("type_text wrote the text but could not restore the caret. Read the current text before retrying.") }
+        }
+        return true
+    }
+
+    private func canTypeTextUsingKeyboardFallback(on element: AXUIElement) -> Bool {
         let role = stringValue(of: element, attribute: kAXRoleAttribute)
         let roleDescription = role.flatMap {
             stringValue(of: element, attribute: kAXRoleDescriptionAttribute) ?? humanizedRoleDescription(for: $0)
@@ -1902,7 +1955,7 @@ public final class ComputerUseService {
         return canUseKeyboardTextFallback(
             role: role,
             roleDescription: roleDescription,
-            isValueSettable: try isSettableForSetValue(element: element, attribute: kAXValueAttribute)
+            isValueSettable: isSettable(element: element, attribute: kAXValueAttribute)
         )
     }
 
