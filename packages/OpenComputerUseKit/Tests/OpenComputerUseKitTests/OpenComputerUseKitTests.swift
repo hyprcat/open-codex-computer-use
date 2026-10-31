@@ -931,6 +931,41 @@ final class OpenComputerUseKitTests: XCTestCase {
         )
     }
 
+    func testCoordinateClickDescendantMustContainThePoint() {
+        // A blank spot in a 560x372 window: the window is the best record, so its descendants get scanned.
+        let blankSpot = CGPoint(x: 400, y: 250)
+        let window = CGRect(x: 0, y: 0, width: 560, height: 372)
+        let closeButton = CGRect(x: 8, y: 8, width: 16, height: 16)
+        let zeroSizeButton = CGRect(x: 400, y: 250, width: 0, height: 0)
+        let buttonUnderPoint = CGRect(x: 380, y: 236, width: 80, height: 28)
+
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: closeButton, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: zeroSizeButton, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: nil, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertTrue(isDescendantClickCandidateAtTarget(candidateFrame: buttonUnderPoint, clickPoint: blankSpot, targetFrame: window))
+    }
+
+    func testDescendantClickRejectsDegenerateFrames() {
+        let target = CGRect(x: 0, y: 0, width: 500, height: 500)
+        for frame in [CGRect(x: 10, y: 10, width: 0, height: 20),
+                      CGRect(x: 10, y: 10, width: 20, height: 0), CGRect.infinite, CGRect.null] {
+            XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: frame, clickPoint: nil, targetFrame: target))
+            XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: frame, clickPoint: CGPoint(x: 10, y: 10), targetFrame: target))
+        }
+    }
+
+    func testElementClickDescendantMustOverlapTheElement() {
+        let card = CGRect(x: 40, y: 120, width: 300, height: 120)
+
+        XCTAssertTrue(
+            isDescendantClickCandidateAtTarget(candidateFrame: CGRect(x: 52, y: 128, width: 120, height: 20), clickPoint: nil, targetFrame: card)
+        )
+        XCTAssertFalse(
+            isDescendantClickCandidateAtTarget(candidateFrame: CGRect(x: 8, y: 8, width: 16, height: 16), clickPoint: nil, targetFrame: card)
+        )
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: nil, clickPoint: nil, targetFrame: card))
+    }
+
     func testContainingRowActionAcceptsTightClickableAncestor() {
         XCTAssertTrue(
             isLikelyContainingRowActionFrame(
@@ -1015,6 +1050,39 @@ final class OpenComputerUseKitTests: XCTestCase {
 
     func testActivationOnlyClickFallbackKeepsWindowRaisePath() {
         XCTAssertTrue(canUseActivationOnlyClickFallback(role: kAXWindowRole as String))
+    }
+
+    func testActivationOnlyClickFallbackKeepsSheetRaisePath() {
+        XCTAssertTrue(canUseActivationOnlyClickFallback(role: kAXSheetRole as String))
+        XCTAssertFalse(canUseActivationOnlyClickFallback(role: kAXGroupRole as String))
+        XCTAssertFalse(canUseActivationOnlyClickFallback(role: nil))
+    }
+
+    func testSnapshotRootsAtFocusedSheet() {
+        XCTAssertTrue(isSnapshotRootRole(kAXWindowRole as String))
+        XCTAssertTrue(isSnapshotRootRole(kAXSheetRole as String))
+        XCTAssertFalse(isSnapshotRootRole(kAXGroupRole as String))
+        XCTAssertFalse(isSnapshotRootRole(nil))
+    }
+
+    func testTypeTextReplacementPreservesUTF16SelectionAndCaret() throws {
+        let replaced = try XCTUnwrap(typedTextReplacement(value: "中🙂文e\u{301}", selection: CFRange(location: 1, length: 2), text: "新🚀"))
+        XCTAssertEqual(replaced.value, "中新🚀文e\u{301}")
+        XCTAssertEqual(replaced.caret, 4)
+        XCTAssertEqual(typedTextReplacement(value: "e\u{301}", selection: CFRange(location: 1, length: 1), text: "X")?.value, "eX")
+        XCTAssertEqual(typedTextReplacement(value: "  ", selection: CFRange(location: 0, length: 0), text: "X")?.value, "X  ")
+        XCTAssertEqual(typedTextReplacement(value: "abc", selection: CFRange(location: 1, length: 0), text: "X")?.value, "aXbc")
+        XCTAssertEqual(typedTextReplacement(value: "abc", selection: CFRange(location: 3, length: 0), text: "X")?.caret, 4)
+        XCTAssertEqual(typedTextReplacement(value: "abc", selection: CFRange(location: 0, length: 3), text: "X")?.value, "X")
+        XCTAssertEqual(typedTextReplacement(value: "", selection: CFRange(location: 0, length: 0), text: "X")?.value, "X")
+    }
+
+    func testTypeTextReplacementRejectsInvalidSelection() {
+        for range in [CFRange(location: -1, length: 0), CFRange(location: 4, length: 0),
+                      CFRange(location: 2, length: 2), CFRange(location: 0, length: -1),
+                      CFRange(location: 1, length: Int.max), CFRange(location: 1, length: 1)] {
+            XCTAssertNil(typedTextReplacement(value: "🙂x", selection: range, text: "X"))
+        }
     }
 
     func testKeyboardTextFallbackRejectsPlainWebArea() {
@@ -1943,7 +2011,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(huge, CGPoint(x: 1512, y: 0), "oversized windows are pinned to the display origin")
         XCTAssertTrue(display.contains(huge))
         for name in ["get_app_state"] {
-            let tool = ToolDefinitions.all.first { $0.name == name }
+            let tool = ToolDefinitions.configured(virtualDisplayEnabled: true).first { $0.name == name }
             let properties = tool?.inputSchema["properties"] as? [String: Any]
             XCTAssertEqual((properties?["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "agent_display", "restore"])
         }
