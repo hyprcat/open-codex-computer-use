@@ -53,7 +53,8 @@
 - 当前支持的 method：
   - `initialize`
   - `notifications/initialized`
-  - `notifications/turn-ended`
+  - macOS stdio MCP、app-agent 和 proxy 按请求释放 autorelease pool；工具分发也有独立 pool。app-agent 只在处理请求和写响应时轮询断连，空闲时由阻塞读检测关闭。回归入口：`scripts/tests/macos-request-lifecycle-smoke.mjs`。
+- `notifications/turn-ended`
   - `ping`
   - `tools/list`
   - `tools/call`
