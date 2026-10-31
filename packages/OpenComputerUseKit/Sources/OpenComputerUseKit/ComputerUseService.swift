@@ -446,6 +446,24 @@ func shouldScanDescendantsOfHitRecord(originalFrame: CGRect?, hitFrame: CGRect?)
     return true
 }
 
+/// A descendant found by scanning below a click target may be pressed only where the click was aimed:
+/// for a coordinate click its frame must contain the click point, for an element click it must overlap
+/// the element's click frame. Without this, a coordinate click on a blank spot, whose best record is
+/// the window, pressed the window's smallest button wherever it was, such as its close button.
+func isDescendantClickCandidateAtTarget(candidateFrame: CGRect?, clickPoint: CGPoint?, targetFrame: CGRect?) -> Bool {
+    guard let candidateFrame, !candidateFrame.isEmpty, !candidateFrame.isInfinite,
+          candidateFrame.minX.isFinite, candidateFrame.minY.isFinite,
+          candidateFrame.width.isFinite, candidateFrame.height.isFinite else {
+        return false
+    }
+
+    if let clickPoint {
+        return candidateFrame.contains(clickPoint)
+    }
+
+    return targetFrame.map(candidateFrame.intersects) ?? false
+}
+
 func isLikelyContainingRowActionFrame(
     targetFrame: CGRect,
     candidateFrame: CGRect?,
@@ -597,6 +615,7 @@ public final class ComputerUseService {
         windowPlacement: WindowPlacement = .keep,
         observation: SnapshotObservationOptions = .defaults
     ) throws -> ToolCallResult {
+        if windowPlacement == .agentDisplay { try VirtualDisplayConfig.current.requireEnabled() }
         try observation.validate()
         guard windowPlacement != .keep else {
             return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, observation: observation), style: .fullState)
@@ -774,7 +793,8 @@ public final class ComputerUseService {
                             button: button,
                             clickCount: clickCount,
                             includeNearbyHitTesting: false,
-                            allowActivationFallback: false
+                            allowActivationFallback: false,
+                            clickPoint: point
                         ) {
                             handled = true
                             break
@@ -1405,8 +1425,13 @@ public final class ComputerUseService {
         button: MouseButtonKind,
         clickCount: Int,
         includeNearbyHitTesting: Bool,
-        allowActivationFallback: Bool
+        allowActivationFallback: Bool,
+        clickPoint: CGPoint? = nil
     ) throws -> Bool {
+        let targetFrame = clickFrame(for: record, snapshot: snapshot)
+        let isAtTarget = { (candidate: ElementRecord) in
+            isDescendantClickCandidateAtTarget(candidateFrame: candidate.localFrame, clickPoint: clickPoint, targetFrame: targetFrame)
+        }
         let preferContainingWebRowAXClick = shouldPreferContainingWebRowAXClick(record, in: snapshot)
         debugClickDecision("record=\(clickDebugDescription(record)) preferContainingWebRowAXClick=\(preferContainingWebRowAXClick)")
 
@@ -1417,14 +1442,19 @@ public final class ComputerUseService {
             return true
         }
 
-        if !preferContainingWebRowAXClick {
+        // Selecting a window index means the window itself, not a button inside it.
+        // Skip both descendant and nearby-point searches and use the existing raise path.
+        let windowIndexClick = clickPoint == nil && record.element.map {
+            canUseActivationOnlyClickFallback(role: stringValue(of: $0, attribute: kAXRoleAttribute))
+        } == true
+        if !preferContainingWebRowAXClick && !windowIndexClick {
             if try performPreferredClick(on: record, button: button, clickCount: clickCount) {
                 debugClickDecision("handled by preferred target \(clickDebugDescription(record))")
                 pauseBeforeReadBack(0.15)
                 return true
             }
 
-            for candidate in descendantClickCandidates(for: record, snapshot: snapshot) {
+            for candidate in descendantClickCandidates(for: record, snapshot: snapshot) where isAtTarget(candidate) {
                 if try performPreferredClick(on: candidate, button: button, clickCount: clickCount) {
                     debugClickDecision("handled by descendant \(clickDebugDescription(candidate))")
                     pauseBeforeReadBack(0.15)
@@ -1447,14 +1477,14 @@ public final class ComputerUseService {
                     }
 
                     if shouldScanDescendantsOfHitRecord(
-                        originalFrame: clickFrame(for: record, snapshot: snapshot),
+                        originalFrame: targetFrame,
                         hitFrame: hitRecord.localFrame
                     ) {
                         for candidate in descendantClickCandidates(
                             for: hitRecord,
                             snapshot: snapshot,
                             sideActionScope: record
-                        ) {
+                        ) where isAtTarget(candidate) {
                             if try performPreferredClick(on: candidate, button: button, clickCount: clickCount) {
                                 debugClickDecision("handled by hit descendant \(clickDebugDescription(candidate))")
                                 pauseBeforeReadBack(0.15)
@@ -1573,11 +1603,13 @@ public final class ComputerUseService {
             .first
     }
 
+    /// `point` is a window point (the space of `ElementRecord.localFrame`), not a screenshot pixel.
     private func hitTestElement(at point: CGPoint, in snapshot: AppSnapshot) throws -> ElementRecord? {
         let appElement = AXUIElementCreateApplication(snapshot.app.pid)
-        let globalPoint = try screenshotToGlobalPoint(snapshot: snapshot, x: Double(point.x), y: Double(point.y))
+        let globalPoint = try windowPointToGlobalPoint(snapshot: snapshot, point: point)
         var hitElement: AXUIElement?
         let result = AXUIElementCopyElementAtPosition(appElement, Float(globalPoint.x), Float(globalPoint.y), &hitElement)
+        debugClickDecision("hit test window=\(point) screen=\(globalPoint) result=\(result.rawValue)")
         guard result == .success, let hitElement else {
             return nil
         }
