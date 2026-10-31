@@ -403,6 +403,26 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testProxiedCallFilePathsOnlyRewriteFileOptionValues() {
+        let cwd = "/tmp/ocu path/中文"
+        for arguments in [
+            ["snapshot", "--args-file", "--text-limit", "50"],
+            ["call", "list_apps", "--args", "--calls-file", "--sleep", "0"],
+            ["call", "list_apps", "--args-file"],
+            [],
+        ] {
+            XCTAssertEqual(resolvingOpenComputerUseCallFilePaths(arguments, currentDirectory: cwd), arguments)
+        }
+        XCTAssertEqual(
+            resolvingOpenComputerUseCallFilePaths(["call", "list_apps", "--args-file", "args 中文.json"], currentDirectory: cwd),
+            ["call", "list_apps", "--args-file", cwd + "/args 中文.json"]
+        )
+        XCTAssertEqual(
+            resolvingOpenComputerUseCallFilePaths(["call", "list_apps", "--args-file", "--calls-file"], currentDirectory: cwd),
+            ["call", "list_apps", "--args-file", cwd + "/--calls-file"]
+        )
+    }
+
     func testProxiedCallFilePathsResolveAgainstCallerDirectory() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

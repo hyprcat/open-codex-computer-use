@@ -24,3 +24,10 @@ macOS 上 `call` 由 LaunchServices 启动的 app agent 执行，agent 的工作
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/OpenComputerUseCLI.swift`
 - `apps/OpenComputerUse/Sources/OpenComputerUse/MacOSAppAgentProxy.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/OpenComputerUseKitTests.swift`
+
+### 2026-10-31 合并前复核
+
+- 同步最新 main；限定只改 `call` 文件选项，跳过其他选项的值，避免把应用名或 JSON 参数值误认成文件选项。
+- 补充参数边界单测和 `scripts/tests/macos-cli-path-smoke.mjs`，使用真实签名 release App、LaunchServices 启动的 app-agent 和隔离 socket namespace。
+- 相对/绝对/父目录路径、空格/中文路径、缺失文件绝对路径错误、后续请求均通过。旧 main 制品在第一个相对 `--calls-file` 请求复现找不到文件。
+- `swift test`：408 项、9 跳过、0 失败；文档与 diff 检查通过。未改 Linux/Windows 直接读取文件的既有行为。
