@@ -43,3 +43,8 @@
 - Negative control: changing only the conversion back to `screenshotToGlobalPoint` makes the same live regression fail: expected (490,627), actual (305,498.5). Restored the fix afterward.
 - Limits: one physical Retina display; this tests AX hit locations and real button activation, not general background mouse delivery to actionless custom views. The separate descendant-selection issue remains in #127.
 - Full Swift suite: 399 tests, 9 skipped, no failures. Documentation checks passed.
+
+### Follow-up main synchronization
+
+- Merged main `21a33a4` after #139 landed. Resolved only the release-note insertion conflict, preserving both feature entries. Hit-test implementation and its regression tests are unchanged from the previously tested head.
+- Documentation and whitespace checks passed; no repeat desktop run was needed for the documentation-only resolution.
