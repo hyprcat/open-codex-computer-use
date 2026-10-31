@@ -33,3 +33,13 @@
   - 修复前 `get_app_state include_screenshot:false` 后的 element_index 点击报截图缺失错误；修复后不再报错。
 - 坐标点击路径用同一个函数，命中测试同样落到正确的行文字上；但在该探针里快照中的窗口记录会先处理点击，因此该路径的最终结果在探针中看不出差异。
 - `swift test` 全量通过。
+
+### 2026-10-31 maintainer review
+
+- Merged current main (`a7fdec1`), retaining both sides of the release-note conflict and the original contributor commit.
+- Kept the production fix; added opt-in debug logging of window/screen hit-test points and AX result codes.
+- Added `scripts/tests/macos-hit-test-smoke.mjs` and its real AppKit receiver. This uses native MCP and ordinary AX APIs, not the synthetic fixture bridge. Run with a normally signed, admitted OCU executable on an unlocked Retina desktop with Accessibility/Screen Recording permissions.
+- Verified 600×432-point window with 1200×864 (2×) and 300×216 (0.5×) screenshots: indexed fallback hits the expected screen point and never presses the unrelated button; screenshot-coordinate auto clicks reach the button, with correct hit-test coordinates. AX-only indexed fallback succeeds, while coordinate clicks without an image fail. Explicit accessibility clicks are observed by the receiver. Foreground PID and physical pointer remain unchanged during actions.
+- Negative control: changing only the conversion back to `screenshotToGlobalPoint` makes the same live regression fail: expected (490,627), actual (305,498.5). Restored the fix afterward.
+- Limits: one physical Retina display; this tests AX hit locations and real button activation, not general background mouse delivery to actionless custom views. The separate descendant-selection issue remains in #127.
+- Full Swift suite: 399 tests, 9 skipped, no failures. Documentation checks passed.

@@ -1572,6 +1572,7 @@ public final class ComputerUseService {
         let globalPoint = try windowPointToGlobalPoint(snapshot: snapshot, point: point)
         var hitElement: AXUIElement?
         let result = AXUIElementCopyElementAtPosition(appElement, Float(globalPoint.x), Float(globalPoint.y), &hitElement)
+        debugClickDecision("hit test window=\(point) screen=\(globalPoint) result=\(result.rawValue)")
         guard result == .success, let hitElement else {
             return nil
         }
