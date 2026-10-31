@@ -36,3 +36,11 @@
 - 直接启动 `__open-computer-use-app-agent`，连接空闲客户端各测 10 s：1 个客户端 10.0 → 0.1 次唤醒/s，2 个 20.8 → 0.1 次唤醒/s。
 - 同一探针，`click` 后光标空闲摆动 30 s 期间（每段约 10 s，2 轮中位数）：harness CPU 13.4–16.5% → 9.4–11.2%。WindowServer CPU 36–39% → 29–34%，但光标隐藏后的基线两次也相差约 4 个百分点，只作参考。光标隐藏后两者相同（约 0.02%）。
 - `swift test`（跳过 `CursorWindowFollowTests`）：374 项，7 项跳过，0 失败。
+
+### 2026-10-31 合并前复核
+
+- 同步最新 main；让断连检测持续到响应写完，防止慢客户端阻塞写入时提前停止检测。
+- 新增 `scripts/tests/macos-request-lifecycle-smoke.mjs` 和 `MacOSResourceProbe.swift`：真实 AppKit 截图、stdio MCP / 独立 app-agent 内存、空闲唤醒、反复连接关闭及响应中断连后继续服务。`--measure-only` 可用于旧版对照。
+- 同一签名 release 制品与 main 对照，各路径连续 100 张截图：第 20～100 次 main footprint 增长约 32.1 MiB / 54.8 MiB，修复版 -1.25 MiB / 约 0 MiB；单个空闲客户端 10 次唤醒/秒降到 0。
+- 10 次连接关闭后 descriptor 数恢复；响应发送中断开后仍可连接并请求。该验证在正常解锁桌面进行，没有声称覆盖受保护会话的租约释放。
+- `swift test`：406 项、9 跳过、0 失败，包含窗口跟随/光标单元回归；`make check-docs`、`git diff --check` 通过。

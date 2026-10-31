@@ -354,8 +354,10 @@ private final class AppAgentConnection: @unchecked Sendable {
             autoreleasepool {
                 monitor.schedule(deadline: .now(), repeating: .milliseconds(100))
                 let response = handle(requestLine: line)
-                monitor.schedule(deadline: .distantFuture)
                 writeAgentLine(response, to: file)
+                // A slow reader can also block the response write. Keep disconnect
+                // monitoring active until the whole exchange has finished.
+                monitor.schedule(deadline: .distantFuture)
             }
         }
     }
