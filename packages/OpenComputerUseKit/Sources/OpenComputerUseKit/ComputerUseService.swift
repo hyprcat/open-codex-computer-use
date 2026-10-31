@@ -451,7 +451,9 @@ func shouldScanDescendantsOfHitRecord(originalFrame: CGRect?, hitFrame: CGRect?)
 /// the element's click frame. Without this, a coordinate click on a blank spot, whose best record is
 /// the window, pressed the window's smallest button wherever it was, such as its close button.
 func isDescendantClickCandidateAtTarget(candidateFrame: CGRect?, clickPoint: CGPoint?, targetFrame: CGRect?) -> Bool {
-    guard let candidateFrame else {
+    guard let candidateFrame, !candidateFrame.isEmpty, !candidateFrame.isInfinite,
+          candidateFrame.minX.isFinite, candidateFrame.minY.isFinite,
+          candidateFrame.width.isFinite, candidateFrame.height.isFinite else {
         return false
     }
 
@@ -1432,7 +1434,12 @@ public final class ComputerUseService {
             return true
         }
 
-        if !preferContainingWebRowAXClick {
+        // Selecting a window index means the window itself, not a button inside it.
+        // Skip both descendant and nearby-point searches and use the existing raise path.
+        let windowIndexClick = clickPoint == nil && record.element.map {
+            canUseActivationOnlyClickFallback(role: stringValue(of: $0, attribute: kAXRoleAttribute))
+        } == true
+        if !preferContainingWebRowAXClick && !windowIndexClick {
             if try performPreferredClick(on: record, button: button, clickCount: clickCount) {
                 debugClickDecision("handled by preferred target \(clickDebugDescription(record))")
                 pauseBeforeReadBack(0.15)

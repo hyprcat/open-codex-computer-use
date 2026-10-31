@@ -17,12 +17,19 @@ final class Counter: NSObject {
     var clicks = 0
     @objc func press(_ sender: Any?) { clicks += 1 }
 }
+final class CloseObserver: NSObject, NSWindowDelegate {
+    var attempts = 0
+    func windowShouldClose(_ sender: NSWindow) -> Bool { attempts += 1; return false }
+}
+let closeObserver = CloseObserver()
+let guarded = CommandLine.arguments.contains("--descendant-guards")
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let window = HitTestWindow(contentRect: NSRect(x: 120, y: 180, width: 600, height: 400),
-    styleMask: [.titled], backing: .buffered, defer: false)
+    styleMask: guarded ? [.titled, .closable] : [.titled], backing: .buffered, defer: false)
 window.title = "OCU Hit Test Fixture"
 window.isReleasedWhenClosed = false
+window.delegate = closeObserver
 let target = TargetView(frame: NSRect(x: 280, y: 150, width: 180, height: 50))
 let counter = Counter()
 // Half the target's window-relative coordinates: the old Retina conversion hits this button.
@@ -39,7 +46,7 @@ Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { _ in
     let top = NSScreen.screens[0].frame.maxY
     let frame = window.frame
     let buttonRect = window.convertToScreen(decoy.frame)
-    let data = try! JSONSerialization.data(withJSONObject: ["targetClicks": target.clicks,
+    let data = try! JSONSerialization.data(withJSONObject: ["targetClicks": target.clicks, "closeAttempts": closeObserver.attempts,
         "wrongClicks": counter.clicks, "scale": window.backingScaleFactor,
         "point": [screenRect.midX - frame.minX, frame.maxY - screenRect.midY],
         "screenPoint": [screenRect.midX, top - screenRect.midY],

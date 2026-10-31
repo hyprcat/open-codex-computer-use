@@ -43,3 +43,15 @@
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/OpenComputerUseKitTests.swift`
 - `docs/ARCHITECTURE.md`
 - `docs/releases/feature-release-notes.md`
+
+
+### 2026-10-31 maintainer review
+
+- Merged main `74d86db` including #126 and #139; preserved both release-note additions and the contributor commit.
+- Closed the remaining window-index hole: explicit AXWindow index clicks skip both descendant and nearby hit searches and use the existing window Raise/focus fallback. Explicit Close button indexes remain actionable.
+- Reject empty, null, infinite and non-finite descendant frames; added regression coverage for degenerate geometry.
+- Extended the real AppKit/native MCP smoke with `--descendant-guards`. A window delegate counts Close requests and vetoes closing so a failure cannot lose the fixture mid-test.
+- Real signed release build passed with 1200×864 and 300×216 screenshots, plus AX-only observation: blank points/actionless row/window indexes do not press Close or unrelated buttons; normal indexed and coordinate button clicks work; explicit Close produces exactly one request. #126 hit-test and image-omission checks remain covered.
+- Negative control using the pre-#127 signed binary fails on the first blank coordinate click: one unexpected Close request.
+- This desktop was in use. The completed live run used `--allow-desktop-activity`, which disables only foreground/pointer stability assertions and reports that limitation. Global pointer fallbacks are explicitly disabled. No claim of foreground/pointer stability is made for this run; explicit window Raise may change focus by design.
+- `swift test`: 402 tests, 9 skipped, 0 failures. Documentation and whitespace checks pass.

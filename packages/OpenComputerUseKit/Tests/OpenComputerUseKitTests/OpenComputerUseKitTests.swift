@@ -923,6 +923,15 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertTrue(isDescendantClickCandidateAtTarget(candidateFrame: buttonUnderPoint, clickPoint: blankSpot, targetFrame: window))
     }
 
+    func testDescendantClickRejectsDegenerateFrames() {
+        let target = CGRect(x: 0, y: 0, width: 500, height: 500)
+        for frame in [CGRect(x: 10, y: 10, width: 0, height: 20),
+                      CGRect(x: 10, y: 10, width: 20, height: 0), CGRect.infinite, CGRect.null] {
+            XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: frame, clickPoint: nil, targetFrame: target))
+            XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: frame, clickPoint: CGPoint(x: 10, y: 10), targetFrame: target))
+        }
+    }
+
     func testElementClickDescendantMustOverlapTheElement() {
         let card = CGRect(x: 40, y: 120, width: 300, height: 120)
 
