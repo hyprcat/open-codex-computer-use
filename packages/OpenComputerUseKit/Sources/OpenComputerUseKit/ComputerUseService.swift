@@ -489,7 +489,7 @@ func canUseActivationOnlyClickFallback(role: String?) -> Bool {
         return false
     }
 
-    return role == kAXWindowRole as String
+    return isSnapshotRootRole(role)
 }
 
 func canUseKeyboardTextFallback(role: String?, roleDescription: String?, isValueSettable: Bool) -> Bool {
@@ -628,8 +628,19 @@ public final class ComputerUseService {
         }
         switch windowPlacement {
         case .agentDisplay:
-            guard let windowID = snapshot.targetWindowID, let windowElement = snapshot.windowElement else {
+            guard var windowID = snapshot.targetWindowID, var windowElement = snapshot.windowElement else {
                 throw ComputerUseError.stateUnavailable("window_placement 'agent_display' requires a current target window. Run get_app_state again.")
+            }
+            // A sheet cannot move on its own; park its window and the sheet goes along.
+            if stringValue(of: windowElement, attribute: kAXRoleAttribute) == kAXSheetRole as String {
+                guard let parent = copyParent(of: windowElement),
+                      stringValue(of: parent, attribute: kAXRoleAttribute) == kAXWindowRole as String,
+                      let parentID = SkyLightSPI.shared.windowID(for: parent), parentID != windowID
+                else {
+                    throw ComputerUseError.stateUnavailable("window_placement 'agent_display' requires the sheet's parent window. Run get_app_state again.")
+                }
+                windowElement = parent
+                windowID = parentID
             }
             try AgentDisplay.shared.park(windowID: windowID, pid: snapshot.app.pid, window: windowElement)
         case .restore:
@@ -1434,7 +1445,7 @@ public final class ComputerUseService {
             return true
         }
 
-        // Selecting a window index means the window itself, not a button inside it.
+        // Selecting a window or sheet index means the root itself, not a button inside it.
         // Skip both descendant and nearby-point searches and use the existing raise path.
         let windowIndexClick = clickPoint == nil && record.element.map {
             canUseActivationOnlyClickFallback(role: stringValue(of: $0, attribute: kAXRoleAttribute))

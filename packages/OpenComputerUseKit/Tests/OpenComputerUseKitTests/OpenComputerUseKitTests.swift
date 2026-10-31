@@ -1030,6 +1030,19 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertTrue(canUseActivationOnlyClickFallback(role: kAXWindowRole as String))
     }
 
+    func testActivationOnlyClickFallbackKeepsSheetRaisePath() {
+        XCTAssertTrue(canUseActivationOnlyClickFallback(role: kAXSheetRole as String))
+        XCTAssertFalse(canUseActivationOnlyClickFallback(role: kAXGroupRole as String))
+        XCTAssertFalse(canUseActivationOnlyClickFallback(role: nil))
+    }
+
+    func testSnapshotRootsAtFocusedSheet() {
+        XCTAssertTrue(isSnapshotRootRole(kAXWindowRole as String))
+        XCTAssertTrue(isSnapshotRootRole(kAXSheetRole as String))
+        XCTAssertFalse(isSnapshotRootRole(kAXGroupRole as String))
+        XCTAssertFalse(isSnapshotRootRole(nil))
+    }
+
     func testKeyboardTextFallbackRejectsPlainWebArea() {
         XCTAssertFalse(
             canUseKeyboardTextFallback(
