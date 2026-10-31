@@ -613,6 +613,7 @@ public final class ComputerUseService {
         windowPlacement: WindowPlacement = .keep,
         observation: SnapshotObservationOptions = .defaults
     ) throws -> ToolCallResult {
+        if windowPlacement == .agentDisplay { try VirtualDisplayConfig.current.requireEnabled() }
         try observation.validate()
         guard windowPlacement != .keep else {
             return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, observation: observation), style: .fullState)
@@ -1587,11 +1588,13 @@ public final class ComputerUseService {
             .first
     }
 
+    /// `point` is a window point (the space of `ElementRecord.localFrame`), not a screenshot pixel.
     private func hitTestElement(at point: CGPoint, in snapshot: AppSnapshot) throws -> ElementRecord? {
         let appElement = AXUIElementCreateApplication(snapshot.app.pid)
-        let globalPoint = try screenshotToGlobalPoint(snapshot: snapshot, x: Double(point.x), y: Double(point.y))
+        let globalPoint = try windowPointToGlobalPoint(snapshot: snapshot, point: point)
         var hitElement: AXUIElement?
         let result = AXUIElementCopyElementAtPosition(appElement, Float(globalPoint.x), Float(globalPoint.y), &hitElement)
+        debugClickDecision("hit test window=\(point) screen=\(globalPoint) result=\(result.rawValue)")
         guard result == .success, let hitElement else {
             return nil
         }
