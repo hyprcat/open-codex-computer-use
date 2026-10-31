@@ -2365,6 +2365,8 @@ extension SnapshotBuilder {
         _ = enableBestEffortAccessibilityModes(appElement)
         let systemWide = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(systemWide, 0.1)
+        // This object changes the process-wide timeout, not just one AX reference.
+        defer { AXUIElementSetMessagingTimeout(systemWide, 0) }
         let focusedApplication = copyElement(systemWide, attribute: kAXFocusedApplicationAttribute)
 
         let rootWindow: AXUIElement
@@ -2405,6 +2407,9 @@ extension SnapshotBuilder {
         }
         let freshContext = try resolveTargetWindow(for: context.app, windowID: context.windowID)
         AXUIElementSetMessagingTimeout(element, 0.1)
+        // Read budgets must not leak into the subsequent action: closing a sheet
+        // can take longer than 50–100 ms even though AXPress succeeds.
+        defer { AXUIElementSetMessagingTimeout(element, 0) }
         guard belongsToWindow(element, window: freshContext.windowElement),
               let bounds = freshContext.windowBounds else {
             throw ComputerUseError.stateUnavailable("Query target no longer belongs to its window; run query again")
@@ -2422,7 +2427,9 @@ extension SnapshotBuilder {
 
     private static func belongsToWindow(_ element: AXUIElement, window: AXUIElement) -> Bool {
         if CFEqual(element, window) { return true }
-        if let owner = copyElement(element, attribute: kAXWindowAttribute) { return CFEqual(owner, window) }
+        // AppKit sheet controls can report the enclosing document as AXWindow.
+        // A different AXWindow is not decisive: verify the bounded parent chain.
+        if let owner = copyElement(element, attribute: kAXWindowAttribute), CFEqual(owner, window) { return true }
         var current = element
         let deadline = ProcessInfo.processInfo.systemUptime + 1
         for _ in 0..<64 {

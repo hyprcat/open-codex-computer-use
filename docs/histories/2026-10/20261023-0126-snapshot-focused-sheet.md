@@ -32,3 +32,24 @@ sheet 挡住整个父窗口，可交互的只有它，所以直接以它为 root
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/OpenComputerUseKitTests.swift`
 - `docs/references/macos-window-visibility-and-spaces.md`
 - `docs/releases/feature-release-notes.md`
+
+### 2026-10-31：PR #118 合并前复核
+
+- 基于已合并 #126 / #127 的最新 main 合并分支，保留贡献者提交，解决发布记录冲突。
+- 真实自定义 sheet 复现：点击根索引会按下内部 Cancel。将窗口索引的 Raise / focus 保护扩展到 sheet，避免扫描内部按钮。
+- 真实 query 点击复现：控件的 AXWindow 指向父文档导致错误拒绝。AXWindow 不匹配时继续检查有界父链，关闭后的旧 sheet 仍须通过窗口 ID 和归属验证。
+- query 的短读取超时会泄漏到动作，导致 Cancel 已关闭面板却报告失败。解析完成后恢复进程级默认超时，重新验证控件后恢复其默认超时，读操作保留原预算。
+- 停靠 sheet 前确认父节点是独立 AXWindow；无法确认时提前返回错误，不创建显示器后再尝试移动 sheet。
+- 新增 `MacOSSheetFixture.swift` 与 `macos-sheet-smoke.mjs`：自定义 sheet（150 ms 动作回调）、普通/过滤父节点的文件选择 sheet、独立模态文件选择器；检查 AX 根、截图尺寸、根索引、快照/查询/坐标 Cancel、旧查询失效与关闭后父窗口恢复。
+- 更新架构、窗口可见性参考、发布记录与 execution plan。
+
+本轮验证：
+- Swift 全套 404 项，9 skipped，0 failures；正常签名的独立 release 制品构建成功。
+- 实机 native MCP 的 12 组面板矩阵全部通过；Retina 文件面板 1760×896、缩放 300×152、AX-only，根索引 auto/accessibility 均不触发 Cancel，三个显式 Cancel 路径均实际关闭面板，旧 query 索引报错，父窗口恢复。
+- main 的负对照返回父窗口；原 PR + main 的负对照点击根节点会误按 Cancel。加入父链检查但未恢复超时时，query Cancel 已关闭面板却返回失败，也已通过回归修复。
+- 使用受控临时文件目录，不操作用户文件，不启用全局物理指针，不改变安装或权限；活跃桌面未断言前台/指针稳定性。虚拟显示器停靠未重跑，原作者的验证保留在上文。
+- `make check-docs`、Node 语法检查与 `git diff --check` 通过。
+
+已知性能边界：系统的深层临时目录在列视图中带出大量祖先目录内容，默认全树采集超过 30 秒；合并前 main 的独立模态 NSOpenPanel 同样复现，属既有遍历问题。已记入技术债，本轮面板矩阵在短路径受控目录验证，不放宽请求超时或截断树预算。
+
+补充回归：`macos-hit-test-smoke.mjs --descendant-guards --allow-desktop-activity` 通过，覆盖 Retina/缩放/AX-only、空白点、无动作行、窗口根索引及显式 Close。
